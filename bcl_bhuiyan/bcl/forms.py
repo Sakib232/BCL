@@ -30,6 +30,14 @@ class CandidateRegistrationForm(UserCreationForm):
         label="Email Address",
     )
 
+    Mock_from = forms.ChoiceField(
+        label="Mock From",
+        required=False,
+        initial="BCL_Bhuiyan",
+        widget=forms.Select(attrs={"class": "form-control"}),
+        help_text="Select your branch / institution.",
+    )
+
     class Meta:
         model = User
         fields = (
@@ -40,6 +48,21 @@ class CandidateRegistrationForm(UserCreationForm):
             "password1",
             "password2",
         )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .models import MockFromOption
+        self.fields["Mock_from"].choices = MockFromOption.get_choices()
+        self.fields["Mock_from"].initial = "BCL_Bhuiyan"
+        self.order_fields([
+            "first_name",
+            "last_name",
+            "username",
+            "email",
+            "Mock_from",
+            "password1",
+            "password2",
+        ])
 
     def clean_email(self):
         email = self.cleaned_data["email"].strip().lower()
@@ -97,10 +120,17 @@ class CandidateRegistrationForm(UserCreationForm):
 
         if commit:
             user.save()
-            CandidateProfile.objects.create(
+            mock_from_val = self.cleaned_data.get("Mock_from") or "BCL_Bhuiyan"
+            profile, created = CandidateProfile.objects.get_or_create(
                 user=user,
-                status=CandidateProfile.ApprovalStatus.PENDING,
+                defaults={
+                    "status": CandidateProfile.ApprovalStatus.PENDING,
+                    "Mock_from": mock_from_val,
+                },
             )
+            if not created and profile.Mock_from != mock_from_val:
+                profile.Mock_from = mock_from_val
+                profile.save(update_fields=["Mock_from"])
 
         return user
 

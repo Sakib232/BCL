@@ -23,6 +23,7 @@ from .models import (
     WritingEvaluation,
     FullMockAttempt,
     CandidateProfile,
+    MockFromOption,
 )
 
 
@@ -1323,12 +1324,21 @@ class WritingEvaluationAdmin(QuestionSetterBaseAdmin):
         return fields
 
 
+@admin.register(MockFromOption)
+class MockFromOptionAdmin(QuestionSetterBaseAdmin):
+    list_display = ("name", "is_active", "created_at")
+    list_filter = ("is_active", "created_at")
+    search_fields = ("name",)
+    list_editable = ("is_active",)
+
+
 @admin.register(CandidateProfile)
 class CandidateProfileAdmin(QuestionSetterBaseAdmin):
     list_display = (
         "user_username",
         "user_full_name",
         "user_email",
+        "Mock_from",
         "status_badge",
         "created_at",
         "reviewed_by",
@@ -1336,6 +1346,7 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
         "action_buttons",
     )
     list_filter = (
+        "Mock_from",
         "status",
         "created_at",
         "reviewed_at",
@@ -1345,6 +1356,7 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
         "user__first_name",
         "user__last_name",
         "user__email",
+        "Mock_from",
     )
     readonly_fields = (
         "created_at",
@@ -1353,6 +1365,16 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
         "reviewed_by",
     )
     actions = ["approve_selected", "reject_selected"]
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name == "Mock_from":
+            return forms.ChoiceField(
+                label="Mock From",
+                choices=MockFromOption.get_choices(),
+                initial="BCL_Bhuiyan",
+                required=False,
+            )
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
 
     def get_queryset(self, request):
         return super().get_queryset(request).select_related("user", "reviewed_by")

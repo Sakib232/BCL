@@ -513,6 +513,13 @@ class CandidateProfile(models.Model):
         related_name='reviewed_candidates',
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
+    Mock_from = models.CharField(
+        max_length=100,
+        default='BCL_Bhuiyan',
+        db_index=True,
+        verbose_name='Mock From',
+        help_text='Institution or branch the student studies from (e.g., BCL_Bhuiyan or another).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -523,6 +530,14 @@ class CandidateProfile(models.Model):
 
     def __str__(self):
         return f'{self.user.username} ({self.get_status_display()})'
+
+    @property
+    def mock_from(self):
+        return self.Mock_from
+
+    @mock_from.setter
+    def mock_from(self, value):
+        self.Mock_from = value
 
     def approve(self, admin_user=None):
         self.status = self.ApprovalStatus.APPROVED
@@ -540,6 +555,36 @@ class CandidateProfile(models.Model):
         self.save(update_fields=['status', 'rejection_reason', 'reviewed_by', 'reviewed_at', 'updated_at'])
         self.user.is_active = False
         self.user.save(update_fields=['is_active'])
+
+
+class MockFromOption(models.Model):
+    name = models.CharField(max_length=100, unique=True, verbose_name="Option Name")
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Is Active",
+        help_text="Designates whether this option appears in registration and admin dropdowns.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Mock From Option"
+        verbose_name_plural = "Mock From Options"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def get_choices(cls):
+        try:
+            options = list(cls.objects.filter(is_active=True).values_list("name", flat=True))
+        except Exception:
+            options = []
+        if not options:
+            options = ["BCL_Bhuiyan"]
+        elif "BCL_Bhuiyan" not in options:
+            options.insert(0, "BCL_Bhuiyan")
+        return [(opt, opt) for opt in options]
 
 # Privacy/security event metadata; no personal response contents.
 from .privacy import SecurityAuditEvent  # noqa: E402,F401
