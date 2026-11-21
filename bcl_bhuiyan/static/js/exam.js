@@ -332,17 +332,35 @@ document.addEventListener("DOMContentLoaded", () => {
         // Parse and render passage paragraphs with paragraph letters (A, B, C...)
         function formatPassageParagraphs(rawText) {
             if (!rawText) return "";
-            const paragraphs = rawText.split(/\n\s*\n/);
-            return paragraphs.map((p) => {
-                const trimmed = p.trim();
-                const matchLetter = trimmed.match(/^([A-H])(?:\s*[\.\:\-\–\—\)]\s*|\s+|\b|(?=[A-Z]))(.*)$/s);
+            const paragraphs = rawText.split(/\r?\n\s*\r?\n|(?=\r?\n\s*[A-Z][\s\.\:\-\–\—\)])/);
+            const mergedParagraphs = [];
+            let i = 0;
+            while (i < paragraphs.length) {
+                const p = (paragraphs[i] || "").trim();
+                if (!p) {
+                    i++;
+                    continue;
+                }
+                if (/^[A-Z]$/.test(p) && i + 1 < paragraphs.length) {
+                    const nextP = (paragraphs[i + 1] || "").trim();
+                    mergedParagraphs.push(p + " " + nextP);
+                    i += 2;
+                } else {
+                    mergedParagraphs.push(p);
+                    i++;
+                }
+            }
+
+            const regex = /^([A-Z])(?:\s*[\.\:\-\–\—\)]\s*|\s*\r?\n\s*|\s+(?=[A-Z"“\'‘’0-9]))(.*)$/s;
+            return mergedParagraphs.map((p) => {
+                const matchLetter = p.match(regex);
                 if (matchLetter) {
                     const letter = matchLetter[1];
                     const content = matchLetter[2];
                     return `<div class="para-block" id="para-${letter}"><p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]"><span class="para-letter font-extrabold text-indigo-700 dark:text-indigo-400 mr-2">${letter}</span><span>${content.trim()}</span></p></div>`;
                 }
-                return `<div class="para-block"><p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]">${trimmed}</p></div>`;
-            }).join("");
+                return `<div class="para-block"><p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]">${p}</p></div>`;
+            }).filter(Boolean).join("");
         }
 
         // Switch Exam Part (Passage / Part 1, 2, 3, 4)
