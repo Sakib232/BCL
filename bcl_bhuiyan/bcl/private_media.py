@@ -7,7 +7,7 @@ from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_GET
-from .models import CandidateAttempt, ExamSection, Question
+from .models import CandidateAttempt, ExamSection, Question, get_subadmin_mock_from
 
 
 ALLOWED_AUDIO_EXTENSIONS = {"mp3", "wav", "ogg", "m4a", "aac", "webm"}
@@ -131,6 +131,11 @@ def review_section_media(request, attempt_id, section_id, kind):
     attempt = get_object_or_404(CandidateAttempt, pk=attempt_id)
     if attempt.candidate != request.user and not request.user.is_staff and not request.user.is_superuser:
         raise Http404
+    if request.user.is_staff and not request.user.is_superuser:
+        sub_branch = get_subadmin_mock_from(request.user)
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if sub_branch and cand_branch != sub_branch:
+            raise Http404
     if attempt.status == CandidateAttempt.AttemptStatus.IN_PROGRESS:
         raise Http404
     section = get_object_or_404(ExamSection, pk=section_id, module_id=attempt.module_id)
@@ -161,6 +166,11 @@ def review_module_media(request, attempt_id, kind):
     attempt = get_object_or_404(CandidateAttempt, pk=attempt_id)
     if attempt.candidate != request.user and not request.user.is_staff and not request.user.is_superuser:
         raise Http404
+    if request.user.is_staff and not request.user.is_superuser:
+        sub_branch = get_subadmin_mock_from(request.user)
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if sub_branch and cand_branch != sub_branch:
+            raise Http404
     if attempt.status == CandidateAttempt.AttemptStatus.IN_PROGRESS:
         raise Http404
     field = attempt.module.audio_file
@@ -188,6 +198,11 @@ def review_question_media(request, attempt_id, question_id):
     attempt = get_object_or_404(CandidateAttempt, pk=attempt_id)
     if attempt.candidate != request.user and not request.user.is_staff and not request.user.is_superuser:
         raise Http404
+    if request.user.is_staff and not request.user.is_superuser:
+        sub_branch = get_subadmin_mock_from(request.user)
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if sub_branch and cand_branch != sub_branch:
+            raise Http404
     if attempt.status == CandidateAttempt.AttemptStatus.IN_PROGRESS:
         raise Http404
     question = get_object_or_404(Question, pk=question_id, section__module_id=attempt.module_id)
@@ -212,6 +227,11 @@ def staff_section_image(request, attempt_id, section_id):
     if not request.user.is_active or not request.user.is_staff:
         raise Http404
     attempt = get_object_or_404(CandidateAttempt, pk=attempt_id, module__module_type="writing")
+    if not request.user.is_superuser:
+        sub_branch = get_subadmin_mock_from(request.user)
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if sub_branch and cand_branch != sub_branch:
+            raise Http404
     if attempt.status == CandidateAttempt.AttemptStatus.IN_PROGRESS:
         raise Http404
     section = get_object_or_404(ExamSection, pk=section_id, module_id=attempt.module_id)

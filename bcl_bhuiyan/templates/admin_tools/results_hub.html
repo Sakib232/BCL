@@ -561,6 +561,12 @@
         </div>
 
         <!-- Filter Controls Bar -->
+        {% if subadmin_branch %}
+        <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;padding:8px 14px;margin-bottom:16px;font-size:12.5px;color:var(--accent);font-weight:600;display:flex;align-items:center;gap:8px;">
+            <span>🏢 Branch Scoped View:</span>
+            <span>You are viewing candidate results for <strong>{{ subadmin_branch }}</strong>.</span>
+        </div>
+        {% endif %}
         <div class="filter-controls-wrap">
             <div class="module-tabs">
                 <a href="?module=all{% if search_query %}&q={{ search_query }}{% endif %}{% if test_filter %}&test={{ test_filter }}{% endif %}" class="module-tab-link {% if mod_filter == 'all' or not mod_filter %}active{% endif %}">

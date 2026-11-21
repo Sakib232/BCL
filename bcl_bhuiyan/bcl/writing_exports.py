@@ -69,6 +69,13 @@ def writing_export(request, attempt_id, format):
         from django.http import Http404
         raise Http404("Unsupported export format")
     attempt, tasks, band = get_export_data(attempt_id)
+    from .models import get_subadmin_mock_from
+    from django.core.exceptions import PermissionDenied
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("Access denied. You can only export writing reports for your assigned branch.")
     lines = export_lines(attempt, tasks, band)
     buffer = BytesIO()
     if format == "docx":

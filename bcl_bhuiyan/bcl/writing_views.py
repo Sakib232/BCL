@@ -10,9 +10,12 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods
 
+from django.core.exceptions import PermissionDenied
+
 from .models import (
     CandidateAnswer, CandidateAttempt, ExamModule, Question,
     WritingTaskEvaluation, get_writing_task_questions,
+    get_subadmin_mock_from,
 )
 
 
@@ -79,23 +82,31 @@ def writing_result_band(attempt):
 @staff_member_required
 @require_http_methods(["GET"])
 def writing_review_list(request):
+    subadmin_branch = get_subadmin_mock_from(request.user)
     attempts = (
         CandidateAttempt.objects.filter(module__module_type=ExamModule.ModuleType.WRITING)
         .exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
-        .select_related("candidate", "module", "module__mock_test")
+        .select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test")
         .annotate(graded_tasks=Count("task_evaluations", distinct=True))
         .order_by("-submitted_at")
     )
-    return render(request, "writing/review_list.html", {"attempts": attempts})
+    if subadmin_branch:
+        attempts = attempts.filter(candidate__candidate_profile__Mock_from=subadmin_branch)
+    return render(request, "writing/review_list.html", {"attempts": attempts, "subadmin_branch": subadmin_branch})
 
 
 @staff_member_required
 @require_http_methods(["GET", "POST"])
 def writing_review_detail(request, attempt_id):
     attempt = get_object_or_404(
-        CandidateAttempt.objects.select_related("candidate", "module", "module__mock_test"),
+        CandidateAttempt.objects.select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test"),
         pk=attempt_id, module__module_type=ExamModule.ModuleType.WRITING,
     )
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("You do not have permission to review writing submissions outside your assigned branch.")
     if attempt.status == CandidateAttempt.AttemptStatus.IN_PROGRESS:
         messages.error(request, "This attempt has not been submitted yet.")
         return redirect("bcl:writing_review_list")
@@ -178,10 +189,16 @@ def writing_review_delete(request, attempt_id):
     their essay answers and evaluations, cleaning up the database and reducing clutter.
     """
     attempt = get_object_or_404(
-        CandidateAttempt.objects.select_related("candidate", "module", "module__mock_test", "full_mock"),
+        CandidateAttempt.objects.select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test", "full_mock"),
         pk=attempt_id,
         module__module_type=ExamModule.ModuleType.WRITING,
     )
+
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("You do not have permission to delete writing submissions outside your assigned branch.")
 
     candidate_name = attempt.candidate.get_full_name() or attempt.candidate.username
     mock_title = attempt.module.mock_test.title if attempt.module and attempt.module.mock_test else f"Attempt #{attempt.pk}"

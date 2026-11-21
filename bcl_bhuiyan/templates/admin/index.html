@@ -553,9 +553,33 @@
 {% block content %}
 <div id="content-main" class="admin-dashboard-container">
 
+  {% if is_subadmin %}
+  <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.3);border-radius:10px;padding:12px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:20px;">🏢</span>
+      <div>
+        <div style="font-weight:700;font-size:14px;color:var(--adm-primary);">Sub-Admin Branch: <u>{{ subadmin_branch }}</u></div>
+        <div style="font-size:12px;color:var(--adm-text-muted);">Access strictly restricted to candidates and results in <strong>{{ subadmin_branch }}</strong>. Other branches and admin accounts are hidden.</div>
+      </div>
+    </div>
+    {% if can_manage_mocks %}
+      <span style="background:#dcfce7;color:#15803d;font-weight:700;font-size:11.5px;padding:4px 10px;border-radius:9999px;">✓ Mock Tests: Authorized</span>
+    {% else %}
+      <span style="background:#fee2e2;color:#b91c1c;font-weight:700;font-size:11.5px;padding:4px 10px;border-radius:9999px;">🔒 Mock Tests: Restricted</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <!-- 1. QUICK ACTIONS BAR -->
   <div class="quick-action-bar">
     <span class="quick-bar-label">Quick Actions:</span>
+
+    {% if user.is_superuser %}
+    <!-- SUBADMIN MANAGEMENT SHORTCUT (MAIN ADMIN ONLY) -->
+    <a href="{% url 'admin:bcl_subadminprofile_changelist' %}" class="btn-quick-action" style="background:#0f766e;color:#ffffff;box-shadow:0 2px 6px rgba(15,118,110,0.3);" title="Manage branch subadmins and their mock permissions">
+      <span>🛡️ Manage Sub-Admins</span>
+    </a>
+    {% endif %}
 
     <!-- UNIFIED RESULTS & EXAM REVIEWS HUB -->
     <a href="{% url 'bcl:admin_results_hub' %}" class="btn-quick-action" style="background:#4f46e5;color:#ffffff;box-shadow:0 2px 6px rgba(79,70,229,0.3);" title="Candidate Exam Results & Answers Review Hub (Listening, Reading, Writing, Full Mocks)">
@@ -584,12 +608,14 @@
     </a>
 
     <!-- QUESTION SETTER SHORTCUTS -->
+    {% if not is_subadmin or can_manage_mocks %}
     <a href="{% url 'admin:bcl_ieltsmocktest_add' %}" class="btn-quick-action btn-action-secondary" title="Create a new {{ platform_name }} test">
       <span>🎯 Create Mock Test</span>
     </a>
     <a href="{% url 'admin:bcl_question_add' %}" class="btn-quick-action btn-action-secondary" title="Add a question to any test section">
       <span>❓ Add Question</span>
     </a>
+    {% endif %}
     <a href="{% url 'admin:bcl_candidateattempt_changelist' %}" class="btn-quick-action btn-action-secondary" title="View changelist of all module attempts">
       <span>📋 All Attempts</span>
     </a>

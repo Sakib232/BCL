@@ -166,6 +166,14 @@ def export_candidate_attempt(request, attempt_id, format):
     attempt = data["attempt"]
     module_type = data["module_type"]
 
+    from .models import get_subadmin_mock_from
+    from django.core.exceptions import PermissionDenied
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("Access denied. You can only export candidate results for your assigned branch.")
+
     buffer = BytesIO()
 
     if format == "docx":
@@ -376,6 +384,7 @@ def export_full_mock_attempt(request, full_attempt_id, format):
     full_mock = get_object_or_404(
         FullMockAttempt.objects.select_related(
             "candidate",
+            "candidate__candidate_profile",
             "mock_test",
             "reading_attempt__module",
             "listening_attempt__module",
@@ -385,6 +394,14 @@ def export_full_mock_attempt(request, full_attempt_id, format):
     )
     if full_mock.status == FullMockAttempt.AttemptStatus.IN_PROGRESS:
         raise Http404("Active Full Mock exams cannot be exported until completed.")
+
+    from .models import get_subadmin_mock_from
+    from django.core.exceptions import PermissionDenied
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(full_mock.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("Access denied. You can only export full mock results for your assigned branch.")
 
     full_mock.calculate_overall_score()
 

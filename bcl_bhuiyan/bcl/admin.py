@@ -9,6 +9,7 @@ from django.db import transaction
 from django.db.models import Count, Q
 from django.forms.models import BaseInlineFormSet
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 
@@ -24,7 +25,14 @@ from .models import (
     FullMockAttempt,
     CandidateProfile,
     MockFromOption,
+    SubAdminProfile,
+    is_main_admin,
+    is_subadmin,
+    get_subadmin_mock_from,
+    can_manage_mock_tests,
 )
+from django.contrib.auth.models import User
+from django.contrib.auth.admin import UserAdmin
 
 
 # ==============================================================================
@@ -46,6 +54,72 @@ class QuestionSetterBaseAdmin(admin.ModelAdmin):
         css = {
             "all": ("css/admin_question_setter.css",)
         }
+
+
+class MockTestManagementAdmin(QuestionSetterBaseAdmin):
+    """Base Admin restricting Mock Test & Question management to superusers or authorized SubAdmins."""
+    def has_module_permission(self, request):
+        return can_manage_mock_tests(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return can_manage_mock_tests(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return can_manage_mock_tests(request.user)
+
+    def has_add_permission(self, request):
+        return can_manage_mock_tests(request.user)
+
+    def has_delete_permission(self, request, obj=None):
+        return can_manage_mock_tests(request.user)
+
+
+class ScopedCandidateDataAdmin(QuestionSetterBaseAdmin):
+    """Restricts candidate data (attempts, evaluations, answers) to the subadmin's branch."""
+    def has_module_permission(self, request):
+        if is_subadmin(request.user):
+            return True
+        return super().has_module_permission(request)
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                if hasattr(self.model, "candidate"):
+                    return qs.filter(candidate__candidate_profile__Mock_from=branch)
+                elif hasattr(self.model, "attempt"):
+                    return qs.filter(attempt__candidate__candidate_profile__Mock_from=branch)
+        return qs
+
+    def has_view_permission(self, request, obj=None):
+        if is_subadmin(request.user):
+            if obj is not None:
+                branch = get_subadmin_mock_from(request.user)
+                cand = getattr(obj, "candidate", None) or getattr(getattr(obj, "attempt", None), "candidate", None)
+                cand_branch = getattr(getattr(cand, "candidate_profile", None), "Mock_from", "")
+                if branch and cand_branch != branch:
+                    return False
+            return True
+        return super().has_view_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if obj is not None and not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            cand = getattr(obj, "candidate", None) or getattr(getattr(obj, "attempt", None), "candidate", None)
+            cand_branch = getattr(getattr(cand, "candidate_profile", None), "Mock_from", "")
+            if branch and cand_branch != branch:
+                return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            cand = getattr(obj, "candidate", None) or getattr(getattr(obj, "attempt", None), "candidate", None)
+            cand_branch = getattr(getattr(cand, "candidate_profile", None), "Mock_from", "")
+            if branch and cand_branch != branch:
+                return False
+        return super().has_delete_permission(request, obj)
 
 
 # ==============================================================================
@@ -454,7 +528,7 @@ class QuestionInline(admin.StackedInline):
 # ==============================================================================
 
 @admin.register(IELTSMockTest)
-class IELTSMockTestAdmin(QuestionSetterBaseAdmin):
+class IELTSMockTestAdmin(MockTestManagementAdmin):
     form = IELTSMockTestAdminForm
 
     list_display = (
@@ -558,7 +632,7 @@ class IELTSMockTestAdmin(QuestionSetterBaseAdmin):
 # ==============================================================================
 
 @admin.register(ExamModule)
-class ExamModuleAdmin(QuestionSetterBaseAdmin):
+class ExamModuleAdmin(MockTestManagementAdmin):
     form = ExamModuleAdminForm
 
     list_display = (
@@ -659,7 +733,7 @@ class ExamModuleAdmin(QuestionSetterBaseAdmin):
 # ==============================================================================
 
 @admin.register(ExamSection)
-class ExamSectionAdmin(QuestionSetterBaseAdmin):
+class ExamSectionAdmin(MockTestManagementAdmin):
     form = ExamSectionAdminForm
 
     list_display = (
@@ -787,7 +861,7 @@ class ExamSectionAdmin(QuestionSetterBaseAdmin):
 # ==============================================================================
 
 @admin.register(Question)
-class QuestionAdmin(QuestionSetterBaseAdmin):
+class QuestionAdmin(MockTestManagementAdmin):
     form = QuestionAdminForm
 
     list_display = (
@@ -957,7 +1031,7 @@ class QuestionAdmin(QuestionSetterBaseAdmin):
 # ==============================================================================
 
 @admin.register(QuestionOption)
-class QuestionOptionAdmin(QuestionSetterBaseAdmin):
+class QuestionOptionAdmin(MockTestManagementAdmin):
     list_display = (
         "id",
         "mock_test_title",
@@ -1008,7 +1082,7 @@ class QuestionOptionAdmin(QuestionSetterBaseAdmin):
 # ==============================================================================
 
 @admin.register(FullMockAttempt)
-class FullMockAttemptAdmin(QuestionSetterBaseAdmin):
+class FullMockAttemptAdmin(ScopedCandidateDataAdmin):
     list_display = (
         "id",
         "candidate",
@@ -1100,7 +1174,7 @@ class FullMockAttemptAdmin(QuestionSetterBaseAdmin):
 
 
 @admin.register(CandidateAttempt)
-class CandidateAttemptAdmin(QuestionSetterBaseAdmin):
+class CandidateAttemptAdmin(ScopedCandidateDataAdmin):
     list_display = (
         "id",
         "candidate",
@@ -1242,7 +1316,7 @@ class CandidateAttemptAdmin(QuestionSetterBaseAdmin):
 
 
 @admin.register(CandidateAnswer)
-class CandidateAnswerAdmin(QuestionSetterBaseAdmin):
+class CandidateAnswerAdmin(ScopedCandidateDataAdmin):
     list_display = (
         "id",
         "attempt",
@@ -1283,7 +1357,7 @@ class CandidateAnswerAdmin(QuestionSetterBaseAdmin):
 
 
 @admin.register(WritingEvaluation)
-class WritingEvaluationAdmin(QuestionSetterBaseAdmin):
+class WritingEvaluationAdmin(ScopedCandidateDataAdmin):
     list_display = (
         "id",
         "attempt",
@@ -1331,6 +1405,212 @@ class MockFromOptionAdmin(QuestionSetterBaseAdmin):
     search_fields = ("name",)
     list_editable = ("is_active",)
 
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+class CandidateProfileAddForm(forms.ModelForm):
+    """
+    Direct registration/sign up form from the Candidate Approvals admin.
+    Creates both the auth.User and CandidateProfile in one atomic operation.
+    Neither status nor rejection_reason is displayed during creation.
+    Mock_from is visible only to main admin (hidden from sub-admin).
+    """
+    username = forms.CharField(
+        max_length=150,
+        required=True,
+        help_text="Required. 150 characters or fewer. Letters, digits and @/./+/-/_ only.",
+        widget=forms.TextInput(attrs={"class": "vTextField"}),
+    )
+    password = forms.CharField(
+        label="Password",
+        widget=forms.PasswordInput(attrs={"class": "vTextField"}),
+        required=True,
+        help_text="Required. Set a strong password for this candidate.",
+    )
+    first_name = forms.CharField(
+        max_length=150,
+        required=False,
+        label="First Name",
+        widget=forms.TextInput(attrs={"class": "vTextField"}),
+    )
+    last_name = forms.CharField(
+        max_length=150,
+        required=False,
+        label="Last Name",
+        widget=forms.TextInput(attrs={"class": "vTextField"}),
+    )
+    email = forms.EmailField(
+        required=False,
+        label="Email Address",
+        widget=forms.EmailInput(attrs={"class": "vTextField"}),
+    )
+    is_active = forms.BooleanField(
+        label="Account Active (Can log in)",
+        initial=True,
+        required=False,
+        help_text="Designates whether this candidate account can log in immediately.",
+    )
+    Mock_from = forms.ChoiceField(
+        label="Mock From",
+        required=False,
+    )
+
+    class Meta:
+        model = CandidateProfile
+        fields = []
+
+    def __init__(self, *args, **kwargs):
+        self.request = kwargs.pop("request", None)
+        super().__init__(*args, **kwargs)
+
+        is_sub = bool(self.request and not self.request.user.is_superuser and is_subadmin(self.request.user))
+        if is_sub:
+            # Sub-admin: Mock_from is NOT visible at all
+            if "Mock_from" in self.fields:
+                del self.fields["Mock_from"]
+        else:
+            # Main admin: can choose any option
+            self.fields["Mock_from"].choices = MockFromOption.get_choices()
+            self.fields["Mock_from"].initial = "BCL_Bhuiyan"
+            self.fields["Mock_from"].help_text = "Select institution or branch for this candidate."
+
+    def clean_username(self):
+        username = self.cleaned_data.get("username", "").strip()
+        if not username:
+            raise ValidationError("Username is required.")
+        if User.objects.filter(username__iexact=username).exists():
+            raise ValidationError(f"A user with username '{username}' already exists.")
+        return username
+
+    def clean_email(self):
+        email = self.cleaned_data.get("email", "").strip().lower()
+        if email and User.objects.filter(email__iexact=email).exists():
+            raise ValidationError(f"A user with email '{email}' already exists.")
+        return email
+
+    def clean_Mock_from(self):
+        if self.request and not self.request.user.is_superuser:
+            branch = get_subadmin_mock_from(self.request.user)
+            if branch:
+                return branch
+        return self.cleaned_data.get("Mock_from") or "BCL_Bhuiyan"
+
+    def save(self, commit=True):
+        profile = super().save(commit=False)
+        username = self.cleaned_data["username"]
+        password = self.cleaned_data["password"]
+        first_name = self.cleaned_data.get("first_name", "")
+        last_name = self.cleaned_data.get("last_name", "")
+        email = self.cleaned_data.get("email", "")
+        is_active = self.cleaned_data.get("is_active", True)
+        status = CandidateProfile.ApprovalStatus.APPROVED if is_active else CandidateProfile.ApprovalStatus.PENDING
+
+        user = User(
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+        )
+        user.set_password(password)
+        user.is_active = is_active
+        user._syncing_status = True
+        user.save()
+        user._syncing_status = False
+
+        profile.user = user
+        profile.Mock_from = self.clean_Mock_from()
+        profile.status = status
+        if status == CandidateProfile.ApprovalStatus.APPROVED:
+            profile.reviewed_by = self.request.user if self.request else None
+            profile.reviewed_at = timezone.now()
+
+        if commit:
+            profile.save()
+        return profile
+
+
+class CandidateProfileChangeForm(forms.ModelForm):
+    """
+    Form used when editing an existing CandidateProfile in admin.
+    Surfaces is_active and locks Mock_from for subadmins.
+    """
+    is_active = forms.BooleanField(
+        label="Account Active (is_active)",
+        required=False,
+        help_text="Designates whether this candidate account is active and can log in.",
+    )
+
+    class Meta:
+        model = CandidateProfile
+        fields = [
+            "Mock_from",
+            "status",
+            "rejection_reason",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        self.request = kwargs.pop("request", None)
+        super().__init__(*args, **kwargs)
+
+        if self.instance and self.instance.pk and getattr(self.instance, "user", None):
+            self.fields["is_active"].initial = self.instance.user.is_active
+
+        subadmin_branch = (
+            get_subadmin_mock_from(self.request.user)
+            if (self.request and not self.request.user.is_superuser)
+            else None
+        )
+        if subadmin_branch:
+            self.fields["Mock_from"].choices = [(subadmin_branch, subadmin_branch)]
+            self.fields["Mock_from"].initial = subadmin_branch
+            self.fields["Mock_from"].widget.attrs["readonly"] = "readonly"
+            self.fields["Mock_from"].widget.attrs["disabled"] = "disabled"
+            self.fields["Mock_from"].required = False
+            self.fields["Mock_from"].help_text = f"Locked to your branch: {subadmin_branch} (cannot be switched)."
+        else:
+            self.fields["Mock_from"].choices = MockFromOption.get_choices()
+
+    def clean_Mock_from(self):
+        subadmin_branch = (
+            get_subadmin_mock_from(self.request.user)
+            if (self.request and not self.request.user.is_superuser)
+            else None
+        )
+        if subadmin_branch:
+            return subadmin_branch
+        return self.cleaned_data.get("Mock_from") or (self.instance.Mock_from if self.instance else "BCL_Bhuiyan")
+
+    def save(self, commit=True):
+        profile = super().save(commit=False)
+        profile.Mock_from = self.clean_Mock_from()
+
+        is_active = self.cleaned_data.get("is_active")
+        if profile.user:
+            if profile.status == CandidateProfile.ApprovalStatus.APPROVED:
+                profile.user.is_active = True if is_active is None else is_active
+            elif profile.status in [CandidateProfile.ApprovalStatus.PENDING, CandidateProfile.ApprovalStatus.REJECTED]:
+                profile.user.is_active = False
+            profile.user._syncing_status = True
+            profile.user.save(update_fields=["is_active"])
+            profile.user._syncing_status = False
+
+        if commit:
+            profile.save()
+        return profile
+
 
 @admin.register(CandidateProfile)
 class CandidateProfileAdmin(QuestionSetterBaseAdmin):
@@ -1340,6 +1620,7 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
         "user_email",
         "Mock_from",
         "status_badge",
+        "is_active_badge",
         "created_at",
         "reviewed_by",
         "reviewed_at",
@@ -1366,8 +1647,161 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
     )
     actions = ["approve_selected", "reject_selected"]
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        if obj is None:
+            form_class = CandidateProfileAddForm
+        else:
+            form_class = CandidateProfileChangeForm
+
+        class FormWithRequest(form_class):
+            def __init__(sub_self, *f_args, **f_kwargs):
+                f_kwargs.setdefault("request", request)
+                super().__init__(*f_args, **f_kwargs)
+
+        return FormWithRequest
+
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:
+            if request.user.is_superuser:
+                return (
+                    (
+                        "User Account (Registration / Sign Up)",
+                        {
+                            "fields": (
+                                "username",
+                                "password",
+                                ("first_name", "last_name"),
+                                "email",
+                                "is_active",
+                            ),
+                            "description": "Register a new candidate user directly from admin.",
+                        },
+                    ),
+                    (
+                        "Candidate Branch",
+                        {
+                            "fields": (
+                                "Mock_from",
+                            ),
+                        },
+                    ),
+                )
+            else:
+                # Sub-admin: Mock_from is NOT visible; neither status nor rejection_reason appears.
+                return (
+                    (
+                        "User Account (Registration / Sign Up)",
+                        {
+                            "fields": (
+                                "username",
+                                "password",
+                                ("first_name", "last_name"),
+                                "email",
+                                "is_active",
+                            ),
+                            "description": "Register a new candidate user directly from admin.",
+                        },
+                    ),
+                )
+        return (
+            (
+                "Candidate User Details",
+                {
+                    "fields": (
+                        "user",
+                        "is_active",
+                    ),
+                },
+            ),
+            (
+                "Branch & Approval Status",
+                {
+                    "fields": (
+                        "Mock_from",
+                        "status",
+                        "rejection_reason",
+                    ),
+                },
+            ),
+            (
+                "Audit Information",
+                {
+                    "fields": (
+                        ("reviewed_by", "reviewed_at"),
+                        ("created_at", "updated_at"),
+                    ),
+                    "classes": ("collapse",),
+                },
+            ),
+        )
+
+    def get_readonly_fields(self, request, obj=None):
+        ro = list(self.readonly_fields)
+        if obj is not None:
+            ro.append("user")
+            if not request.user.is_superuser:
+                ro.append("Mock_from")
+        return ro
+
+    def has_add_permission(self, request):
+        if is_subadmin(request.user) or request.user.is_superuser:
+            return True
+        return super().has_add_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        if is_subadmin(request.user):
+            if obj is not None:
+                branch = get_subadmin_mock_from(request.user)
+                if branch and obj.Mock_from != branch:
+                    return False
+            return True
+        return super().has_delete_permission(request, obj)
+
+    def delete_model(self, request, obj):
+        user = obj.user
+        super().delete_model(request, obj)
+        if user and not getattr(user, "_is_being_deleted", False):
+            user._is_being_deleted = True
+            try:
+                from .models import CandidateAttempt, FullMockAttempt
+                FullMockAttempt.objects.filter(candidate=user).delete()
+                CandidateAttempt.objects.filter(candidate=user).delete()
+                user.delete()
+            except Exception:
+                pass
+
+    def delete_queryset(self, request, queryset):
+        users = [p.user for p in queryset if p.user]
+        super().delete_queryset(request, queryset)
+        for user in users:
+            if not getattr(user, "_is_being_deleted", False):
+                user._is_being_deleted = True
+                try:
+                    from .models import CandidateAttempt, FullMockAttempt
+                    FullMockAttempt.objects.filter(candidate=user).delete()
+                    CandidateAttempt.objects.filter(candidate=user).delete()
+                    user.delete()
+                except Exception:
+                    pass
+
+    def save_model(self, request, obj, form, change):
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                obj.Mock_from = branch
+        super().save_model(request, obj, form, change)
+
     def formfield_for_dbfield(self, db_field, request, **kwargs):
         if db_field.name == "Mock_from":
+            if not request.user.is_superuser:
+                branch = get_subadmin_mock_from(request.user)
+                if branch:
+                    return forms.ChoiceField(
+                        label="Mock From",
+                        choices=[(branch, branch)],
+                        initial=branch,
+                        required=False,
+                    )
             return forms.ChoiceField(
                 label="Mock From",
                 choices=MockFromOption.get_choices(),
@@ -1376,8 +1810,40 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
             )
         return super().formfield_for_dbfield(db_field, request, **kwargs)
 
+    @admin.display(description="Active", boolean=True)
+    def is_active_badge(self, obj):
+        return obj.user.is_active if (obj and obj.user) else False
+
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("user", "reviewed_by")
+        qs = super().get_queryset(request).select_related("user", "reviewed_by")
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                qs = qs.filter(Mock_from=branch)
+        return qs
+
+    def has_module_permission(self, request):
+        if is_subadmin(request.user):
+            return True
+        return super().has_module_permission(request)
+
+    def has_view_permission(self, request, obj=None):
+        if is_subadmin(request.user):
+            if obj is not None:
+                branch = get_subadmin_mock_from(request.user)
+                if branch and obj.Mock_from != branch:
+                    return False
+            return True
+        return super().has_view_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if is_subadmin(request.user):
+            if obj is not None:
+                branch = get_subadmin_mock_from(request.user)
+                if branch and obj.Mock_from != branch:
+                    return False
+            return True
+        return super().has_change_permission(request, obj)
 
     @admin.display(description="Username", ordering="user__username")
     def user_username(self, obj):
@@ -1441,6 +1907,11 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
     def approve_candidate_view(self, request, profile_id):
         profile = self.get_object(request, profile_id)
         if profile:
+            if not request.user.is_superuser:
+                branch = get_subadmin_mock_from(request.user)
+                if branch and profile.Mock_from != branch:
+                    self.message_user(request, "Permission denied. You can only approve candidates in your assigned branch.", messages.ERROR)
+                    return redirect("admin:bcl_candidateprofile_changelist")
             profile.approve(admin_user=request.user)
             self.message_user(
                 request,
@@ -1452,6 +1923,11 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
     def reject_candidate_view(self, request, profile_id):
         profile = self.get_object(request, profile_id)
         if profile:
+            if not request.user.is_superuser:
+                branch = get_subadmin_mock_from(request.user)
+                if branch and profile.Mock_from != branch:
+                    self.message_user(request, "Permission denied. You can only reject candidates in your assigned branch.", messages.ERROR)
+                    return redirect("admin:bcl_candidateprofile_changelist")
             profile.reject(admin_user=request.user)
             self.message_user(
                 request,
@@ -1462,6 +1938,10 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
 
     @admin.action(description="Approve selected candidates")
     def approve_selected(self, request, queryset):
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                queryset = queryset.filter(Mock_from=branch)
         count = 0
         for profile in queryset:
             profile.approve(admin_user=request.user)
@@ -1470,6 +1950,10 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
 
     @admin.action(description="Reject selected candidates")
     def reject_selected(self, request, queryset):
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                queryset = queryset.filter(Mock_from=branch)
         count = 0
         for profile in queryset:
             profile.reject(admin_user=request.user)
@@ -1478,7 +1962,258 @@ class CandidateProfileAdmin(QuestionSetterBaseAdmin):
 
 
 # ==============================================================================
-# 9. ENHANCED ADMIN DASHBOARD CONTEXT
+# 9. SUBADMIN MANAGEMENT (MAIN ADMIN ONLY)
+# ==============================================================================
+
+class SubAdminCreationForm(forms.ModelForm):
+    username = forms.CharField(max_length=150, required=True, help_text="Required. 150 characters or fewer.")
+    password = forms.CharField(widget=forms.PasswordInput, required=True, help_text="Password for subadmin login.")
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    email = forms.EmailField(required=False)
+    is_active = forms.BooleanField(initial=True, required=False, label="Active account")
+
+    class Meta:
+        model = SubAdminProfile
+        fields = ("username", "password", "first_name", "last_name", "email", "Mock_from", "can_manage_mocks", "is_active")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["Mock_from"].widget = forms.Select(choices=MockFromOption.get_choices())
+
+    def clean_username(self):
+        username = self.cleaned_data["username"].strip()
+        if User.objects.filter(username__iexact=username).exists():
+            raise forms.ValidationError("A user with this username already exists.")
+        return username
+
+    def save(self, commit=True):
+        data = self.cleaned_data
+        user = User.objects.create_user(
+            username=data["username"],
+            email=data.get("email", ""),
+            password=data["password"],
+            first_name=data.get("first_name", ""),
+            last_name=data.get("last_name", ""),
+            is_staff=True,
+            is_superuser=False,
+            is_active=data.get("is_active", True),
+        )
+        profile = super().save(commit=False)
+        profile.user = user
+        if commit:
+            profile.save()
+        return profile
+
+
+class SubAdminChangeForm(forms.ModelForm):
+    new_password = forms.CharField(
+        widget=forms.PasswordInput,
+        required=False,
+        label="Set New Password",
+        help_text="Leave blank to keep the current password.",
+    )
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    email = forms.EmailField(required=False)
+    is_active = forms.BooleanField(required=False, label="Active account")
+
+    class Meta:
+        model = SubAdminProfile
+        fields = ("first_name", "last_name", "email", "new_password", "Mock_from", "can_manage_mocks", "is_active")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and self.instance.user:
+            self.fields["first_name"].initial = self.instance.user.first_name
+            self.fields["last_name"].initial = self.instance.user.last_name
+            self.fields["email"].initial = self.instance.user.email
+            self.fields["is_active"].initial = self.instance.user.is_active
+        self.fields["Mock_from"].widget = forms.Select(choices=MockFromOption.get_choices())
+
+    def save(self, commit=True):
+        profile = super().save(commit=commit)
+        user = profile.user
+        data = self.cleaned_data
+        user.first_name = data.get("first_name", "")
+        user.last_name = data.get("last_name", "")
+        user.email = data.get("email", "")
+        user.is_active = data.get("is_active", True)
+        user.is_staff = True
+        user.is_superuser = False
+        if data.get("new_password"):
+            user.set_password(data["new_password"])
+        user.save()
+        return profile
+
+
+@admin.register(SubAdminProfile)
+class SubAdminProfileAdmin(QuestionSetterBaseAdmin):
+    """
+    Subadmin configuration center strictly reserved for Main Admin (superuser).
+    Allows Main Admin to create subadmins with their assigned Mock_from branch
+    and grant or revoke the privilege to view/modify IELTS Mock Tests.
+    """
+    add_form = SubAdminCreationForm
+    form = SubAdminChangeForm
+
+    list_display = (
+        "user_username",
+        "user_full_name",
+        "user_email",
+        "Mock_from",
+        "can_manage_mocks_badge",
+        "is_active_badge",
+        "created_at",
+    )
+    list_filter = (
+        "Mock_from",
+        "can_manage_mocks",
+        "user__is_active",
+        "created_at",
+    )
+    search_fields = (
+        "user__username",
+        "user__first_name",
+        "user__last_name",
+        "user__email",
+        "Mock_from",
+    )
+
+    def get_form(self, request, obj=None, **kwargs):
+        if obj is None:
+            return self.add_form
+        return self.form
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    @admin.display(description="Username", ordering="user__username")
+    def user_username(self, obj):
+        return obj.user.username
+
+    @admin.display(description="Full Name", ordering="user__first_name")
+    def user_full_name(self, obj):
+        full = f"{obj.user.first_name} {obj.user.last_name}".strip()
+        return full or "—"
+
+    @admin.display(description="Email", ordering="user__email")
+    def user_email(self, obj):
+        return obj.user.email or "—"
+
+    @admin.display(description="Mock Management")
+    def can_manage_mocks_badge(self, obj):
+        if obj.can_manage_mocks:
+            return format_html(
+                '<span style="background-color:#dcfce7;color:#15803d;padding:3px 10px;border-radius:9999px;font-weight:700;font-size:12px;">Authorized (View &amp; Edit)</span>'
+            )
+        return format_html(
+            '<span style="background-color:#fee2e2;color:#b91c1c;padding:3px 10px;border-radius:9999px;font-weight:700;font-size:12px;">Restricted (No Access)</span>'
+        )
+
+    @admin.display(description="Account Status")
+    def is_active_badge(self, obj):
+        if obj.user.is_active:
+            return format_html('<span style="color:#16a34a;font-weight:700;">Active</span>')
+        return format_html('<span style="color:#dc2626;font-weight:700;">Disabled</span>')
+
+
+# ==============================================================================
+# 10. SCOPED USER ADMIN (HIDES MAIN ADMIN & OTHER BRANCHES FROM SUBADMINS)
+# ==============================================================================
+
+try:
+    admin.site.unregister(User)
+except admin.sites.NotRegistered:
+    pass
+
+
+@admin.register(User)
+class ScopedUserAdmin(UserAdmin):
+    """
+    UserAdmin that ensures subadmins can ONLY view candidates from their assigned Mock_from branch.
+    Superusers and other staff accounts are completely hidden from subadmins.
+    """
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not request.user.is_superuser:
+            branch = get_subadmin_mock_from(request.user)
+            if branch:
+                return qs.filter(
+                    is_superuser=False,
+                    is_staff=False,
+                    candidate_profile__Mock_from=branch,
+                )
+            return qs.none()
+        return qs
+
+    def has_module_permission(self, request):
+        if is_subadmin(request.user):
+            return True
+        return super().has_module_permission(request)
+
+    def has_add_permission(self, request):
+        if not request.user.is_superuser:
+            return False
+        return super().has_add_permission(request)
+
+    def has_view_permission(self, request, obj=None):
+        if is_subadmin(request.user):
+            if obj is not None:
+                if obj.is_superuser or obj.is_staff:
+                    return False
+                branch = get_subadmin_mock_from(request.user)
+                cand_branch = getattr(getattr(obj, "candidate_profile", None), "Mock_from", "")
+                if branch and cand_branch != branch:
+                    return False
+            return True
+        return super().has_view_permission(request, obj)
+
+    def has_change_permission(self, request, obj=None):
+        if obj is not None and not request.user.is_superuser:
+            if obj.is_superuser or obj.is_staff:
+                return False
+            branch = get_subadmin_mock_from(request.user)
+            cand_branch = getattr(getattr(obj, "candidate_profile", None), "Mock_from", "")
+            if branch and cand_branch != branch:
+                return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and not request.user.is_superuser:
+            if obj.is_superuser or obj.is_staff:
+                return False
+            branch = get_subadmin_mock_from(request.user)
+            cand_branch = getattr(getattr(obj, "candidate_profile", None), "Mock_from", "")
+            if branch and cand_branch != branch:
+                return False
+        return super().has_delete_permission(request, obj)
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if not request.user.is_superuser:
+            # Subadmins cannot see or edit Permissions section (is_staff, is_superuser, groups)
+            fieldsets = [
+                (name, data) for (name, data) in fieldsets
+                if name not in ("Permissions", "Important dates")
+            ]
+        return fieldsets
+
+
+# ==============================================================================
+# 11. ENHANCED ADMIN DASHBOARD CONTEXT WITH BRANCH SCOPING
 # ==============================================================================
 
 _orig_admin_index = admin.site.index
@@ -1487,42 +2222,64 @@ _orig_admin_index = admin.site.index
 def custom_admin_index(request, extra_context=None):
     extra_context = extra_context or {}
     User = get_user_model()
+    user = request.user
 
-    total_students = User.objects.filter(is_staff=False, is_superuser=False).count()
-    total_mock_tests = IELTSMockTest.objects.count()
-    total_module_attempts = CandidateAttempt.objects.exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS).count()
-    total_full_mocks = FullMockAttempt.objects.exclude(status=FullMockAttempt.AttemptStatus.IN_PROGRESS).count()
+    is_sub = is_subadmin(user)
+    sub_branch = get_subadmin_mock_from(user) if is_sub else None
+    can_mocks = can_manage_mock_tests(user)
 
-    # Pending writing count: submitted writing attempts with fewer than 2 graded tasks
-    pending_writing = (
+    user_filter = Q(is_staff=False, is_superuser=False)
+    attempt_filter = ~Q(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
+    full_mock_filter = ~Q(status=FullMockAttempt.AttemptStatus.IN_PROGRESS)
+    profile_filter = Q()
+
+    if is_sub and sub_branch:
+        user_filter &= Q(candidate_profile__Mock_from=sub_branch)
+        attempt_filter &= Q(candidate__candidate_profile__Mock_from=sub_branch)
+        full_mock_filter &= Q(candidate__candidate_profile__Mock_from=sub_branch)
+        profile_filter &= Q(Mock_from=sub_branch)
+
+    total_students = User.objects.filter(user_filter).count()
+    total_mock_tests = IELTSMockTest.objects.count() if can_mocks else 0
+    total_module_attempts = CandidateAttempt.objects.filter(attempt_filter).count()
+    total_full_mocks = FullMockAttempt.objects.filter(full_mock_filter).count()
+
+    pending_writing_qs = (
         CandidateAttempt.objects.filter(module__module_type=ExamModule.ModuleType.WRITING)
-        .exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
+        .filter(attempt_filter)
         .annotate(graded_tasks=Count("task_evaluations", distinct=True))
         .filter(graded_tasks__lt=2)
-        .count()
     )
+    pending_writing = pending_writing_qs.count()
 
-    # Recent student results (Reading, Listening, Writing)
     recent_student_results = (
-        CandidateAttempt.objects.exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
+        CandidateAttempt.objects.filter(attempt_filter)
         .select_related("candidate", "module", "module__mock_test")
         .prefetch_related("task_evaluations")
         .order_by("-submitted_at", "-started_at")[:30]
     )
 
-    # Recent full mock attempts
     recent_full_mocks = (
-        FullMockAttempt.objects.exclude(status=FullMockAttempt.AttemptStatus.IN_PROGRESS)
+        FullMockAttempt.objects.filter(full_mock_filter)
         .select_related("candidate", "mock_test", "reading_attempt", "listening_attempt", "writing_attempt")
         .order_by("-submitted_at", "-started_at")[:20]
     )
 
+    pending_registrations = (
+        CandidateProfile.objects.filter(status=CandidateProfile.ApprovalStatus.PENDING)
+        .filter(profile_filter)
+        .count()
+    )
+
     extra_context.update({
+        "is_subadmin": is_sub,
+        "subadmin_branch": sub_branch,
+        "can_manage_mocks": can_mocks,
         "total_students": total_students,
         "total_mock_tests": total_mock_tests,
         "total_module_attempts": total_module_attempts,
         "total_full_mocks": total_full_mocks,
-        "pending_registrations": CandidateProfile.objects.filter(status=CandidateProfile.ApprovalStatus.PENDING).count(),
+        "pending_registrations": pending_registrations,
         "pending_writing": pending_writing,
         "recent_student_results": recent_student_results,
         "recent_full_mocks": recent_full_mocks,

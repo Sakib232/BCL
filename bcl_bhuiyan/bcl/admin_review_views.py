@@ -18,8 +18,17 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404, render, redirect
 from django.views.decorators.http import require_GET, require_http_methods
 
+from django.core.exceptions import PermissionDenied
+
 from .exam_views import get_listening_review_data
-from .models import CandidateAttempt, ExamModule, FullMockAttempt, IELTSMockTest
+from .models import (
+    CandidateAttempt,
+    ExamModule,
+    FullMockAttempt,
+    IELTSMockTest,
+    is_subadmin,
+    get_subadmin_mock_from,
+)
 from .result_exports import get_module_attempt_data
 
 
@@ -29,17 +38,22 @@ def admin_results_hub(request):
     """
     Unified Examiner/Admin Hub: List all student exam submissions (Listening, Reading, Writing, Full Mock)
     with filter tabs, search, visible band scores, raw scores, and direct review links.
+    Scoped to subadmin's assigned branch if user is a subadmin.
     """
+    subadmin_branch = get_subadmin_mock_from(request.user)
     mod_filter = request.GET.get("module", "all").strip().lower()
     search_query = request.GET.get("q", "").strip()
     test_filter = request.GET.get("test", "").strip()
 
     attempts_qs = (
         CandidateAttempt.objects.exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
-        .select_related("candidate", "module", "module__mock_test", "full_mock")
+        .select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test", "full_mock")
         .prefetch_related("task_evaluations")
         .order_by("-submitted_at", "-id")
     )
+
+    if subadmin_branch:
+        attempts_qs = attempts_qs.filter(candidate__candidate_profile__Mock_from=subadmin_branch)
 
     if search_query:
         attempts_qs = attempts_qs.filter(
@@ -56,20 +70,28 @@ def admin_results_hub(request):
     if mod_filter in ("listening", "reading", "writing"):
         attempts_qs = attempts_qs.filter(module__module_type=mod_filter)
 
-    # Global summary metrics for quick overview
-    total_completed = CandidateAttempt.objects.exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS).count()
-    listening_count = CandidateAttempt.objects.filter(module__module_type=ExamModule.ModuleType.LISTENING).exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS).count()
-    reading_count = CandidateAttempt.objects.filter(module__module_type=ExamModule.ModuleType.READING).exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS).count()
-    writing_count = CandidateAttempt.objects.filter(module__module_type=ExamModule.ModuleType.WRITING).exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS).count()
-    full_mock_count = FullMockAttempt.objects.exclude(status=FullMockAttempt.AttemptStatus.IN_PROGRESS).count()
+    # Scoped summary metrics for quick overview
+    base_attempts = CandidateAttempt.objects.exclude(status=CandidateAttempt.AttemptStatus.IN_PROGRESS)
+    base_fm = FullMockAttempt.objects.exclude(status=FullMockAttempt.AttemptStatus.IN_PROGRESS)
+    if subadmin_branch:
+        base_attempts = base_attempts.filter(candidate__candidate_profile__Mock_from=subadmin_branch)
+        base_fm = base_fm.filter(candidate__candidate_profile__Mock_from=subadmin_branch)
+
+    total_completed = base_attempts.count()
+    listening_count = base_attempts.filter(module__module_type=ExamModule.ModuleType.LISTENING).count()
+    reading_count = base_attempts.filter(module__module_type=ExamModule.ModuleType.READING).count()
+    writing_count = base_attempts.filter(module__module_type=ExamModule.ModuleType.WRITING).count()
+    full_mock_count = base_fm.count()
 
     full_mocks = []
     if mod_filter == "full_mock":
         fm_qs = (
             FullMockAttempt.objects.exclude(status=FullMockAttempt.AttemptStatus.IN_PROGRESS)
-            .select_related("candidate", "mock_test", "listening_attempt", "reading_attempt", "writing_attempt")
+            .select_related("candidate", "candidate__candidate_profile", "mock_test", "listening_attempt", "reading_attempt", "writing_attempt")
             .order_by("-submitted_at", "-id")
         )
+        if subadmin_branch:
+            fm_qs = fm_qs.filter(candidate__candidate_profile__Mock_from=subadmin_branch)
         if search_query:
             fm_qs = fm_qs.filter(
                 Q(candidate__username__icontains=search_query)
@@ -101,6 +123,7 @@ def admin_results_hub(request):
         "reading_count": reading_count,
         "writing_count": writing_count,
         "full_mock_count": full_mock_count,
+        "subadmin_branch": subadmin_branch,
     })
 
 
@@ -113,9 +136,15 @@ def admin_attempt_review(request, attempt_id):
     timing details, and continuous audio playback for listening attempts.
     """
     attempt = get_object_or_404(
-        CandidateAttempt.objects.select_related("candidate", "module", "module__mock_test", "full_mock"),
+        CandidateAttempt.objects.select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test", "full_mock"),
         pk=attempt_id
     )
+
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("You do not have permission to view candidate results outside your assigned branch.")
 
     module = attempt.module
     module_type = module.module_type
@@ -200,11 +229,17 @@ def admin_full_mock_review(request, full_attempt_id):
     """
     full_mock = get_object_or_404(
         FullMockAttempt.objects.select_related(
-            "candidate", "mock_test",
+            "candidate", "candidate__candidate_profile", "mock_test",
             "listening_attempt__module", "reading_attempt__module", "writing_attempt__module"
         ),
         pk=full_attempt_id
     )
+
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(full_mock.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("You do not have permission to view full mock results outside your assigned branch.")
 
     listening_review = get_listening_review_data(full_mock.listening_attempt) if full_mock.listening_attempt else None
 
@@ -274,9 +309,15 @@ def admin_attempt_delete(request, attempt_id):
     associated answers and evaluations to keep database storage clean.
     """
     attempt = get_object_or_404(
-        CandidateAttempt.objects.select_related("candidate", "module", "module__mock_test", "full_mock"),
+        CandidateAttempt.objects.select_related("candidate", "candidate__candidate_profile", "module", "module__mock_test", "full_mock"),
         pk=attempt_id,
     )
+
+    subadmin_branch = get_subadmin_mock_from(request.user)
+    if subadmin_branch:
+        cand_branch = getattr(getattr(attempt.candidate, "candidate_profile", None), "Mock_from", "")
+        if cand_branch != subadmin_branch:
+            raise PermissionDenied("You do not have permission to delete candidate results outside your assigned branch.")
     mod_name = attempt.module.get_module_type_display() if attempt.module else "Exam"
     candidate_name = attempt.candidate.get_full_name() or attempt.candidate.username
     mock_title = attempt.module.mock_test.title if attempt.module and attempt.module.mock_test else f"Attempt #{attempt.pk}"

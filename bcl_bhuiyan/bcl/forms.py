@@ -119,7 +119,9 @@ class CandidateRegistrationForm(UserCreationForm):
         user.is_active = False  # Keep account inactive until approved by an administrator
 
         if commit:
+            user._syncing_status = True
             user.save()
+            user._syncing_status = False
             mock_from_val = self.cleaned_data.get("Mock_from") or "BCL_Bhuiyan"
             profile, created = CandidateProfile.objects.get_or_create(
                 user=user,
@@ -131,6 +133,7 @@ class CandidateRegistrationForm(UserCreationForm):
             if not created and profile.Mock_from != mock_from_val:
                 profile.Mock_from = mock_from_val
                 profile.save(update_fields=["Mock_from"])
+            user.candidate_profile = profile
 
         return user
 

@@ -74,3 +74,46 @@ class MockFromFeatureTests(TestCase):
         self.assertEqual(response.status_code, 200)
         user = User.objects.get(username="karim_uttara")
         self.assertEqual(user.candidate_profile.Mock_from, "Uttara Branch")
+
+    def test_dashboard_navbar_brand_uses_mock_from_and_removes_heading(self):
+        # Create approved user in Dhanmondi branch
+        user = User.objects.create_user(username="rahim_dhan", password="Password123!")
+        CandidateProfile.objects.create(user=user, Mock_from="Dhanmondi Branch", status=CandidateProfile.ApprovalStatus.APPROVED)
+        client = Client()
+        client.force_login(user)
+
+        res = client.get(reverse("bcl:dashboard"))
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode("utf-8")
+
+        # 1. Navbar brand must display user's Mock_from
+        self.assertIn("Dhanmondi Branch", content)
+        # 2. Logo must remain intact
+        self.assertIn("images/bcl.", content)
+        # 3. Red marked heading 'Available BCL_Bhuiyan Tests' must be removed
+        self.assertNotIn("Available BCL_Bhuiyan Tests", content)
+        self.assertNotIn("Available Dhanmondi Branch Tests", content)
+
+    def test_dashboard_navbar_brand_defaults_to_bcl_bhuiyan(self):
+        user = User.objects.create_user(username="rahim_def", password="Password123!")
+        CandidateProfile.objects.create(user=user, Mock_from="BCL_Bhuiyan", status=CandidateProfile.ApprovalStatus.APPROVED)
+        client = Client()
+        client.force_login(user)
+
+        res = client.get(reverse("bcl:dashboard"))
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode("utf-8")
+
+        self.assertIn("BCL_Bhuiyan", content)
+        self.assertIn("images/bcl.", content)
+        self.assertNotIn("Available BCL_Bhuiyan Tests", content)
+
+    def test_login_page_no_password_toggler(self):
+        client = Client()
+        res = client.get(reverse("bcl:login"))
+        self.assertEqual(res.status_code, 200)
+        content = res.content.decode("utf-8")
+        self.assertNotIn("eye-toggle", content)
+        self.assertNotIn("togglePassword", content)
+        self.assertNotIn("eye-icon", content)
+        self.assertNotIn("password-wrapper", content)

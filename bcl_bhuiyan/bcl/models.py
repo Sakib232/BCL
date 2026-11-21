@@ -487,7 +487,26 @@ class WritingTaskEvaluation(models.Model):
     def __str__(self):
         return f"Attempt #{self.attempt_id} — Task {self.task_number}"
 
+class CandidateProfileQuerySet(models.QuerySet):
+    def create(self, **kwargs):
+        user = kwargs.get("user")
+        if user:
+            existing = self.filter(user=user).first()
+            if existing:
+                for k, v in kwargs.items():
+                    setattr(existing, k, v)
+                existing.save()
+                return existing
+        return super().create(**kwargs)
+
+
+class CandidateProfileManager(models.Manager.from_queryset(CandidateProfileQuerySet)):
+    pass
+
+
 class CandidateProfile(models.Model):
+    objects = CandidateProfileManager()
+
     class ApprovalStatus(models.TextChoices):
         PENDING = 'pending', 'Pending Approval'
         APPROVED = 'approved', 'Approved'
@@ -585,6 +604,91 @@ class MockFromOption(models.Model):
         elif "BCL_Bhuiyan" not in options:
             options.insert(0, "BCL_Bhuiyan")
         return [(opt, opt) for opt in options]
+
+
+class SubAdminProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="subadmin_profile",
+    )
+    Mock_from = models.CharField(
+        max_length=100,
+        default="BCL_Bhuiyan",
+        db_index=True,
+        verbose_name="Assigned Mock From / Branch",
+        help_text="This subadmin can only view and manage candidates and results belonging to this Mock_From branch.",
+    )
+    can_manage_mocks = models.BooleanField(
+        default=False,
+        verbose_name="Can View & Modify Mock Tests",
+        help_text="If authorized by Main Admin, this subadmin can view and edit IELTS Mock Tests, Modules, and Questions.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Sub-Admin"
+        verbose_name_plural = "Sub-Admins"
+        ordering = ["user__username"]
+
+    def __str__(self):
+        status = "With Mock Editing" if self.can_manage_mocks else "Result & Student Scoped"
+        return f"{self.user.username} ({self.Mock_from} — {status})"
+
+    @property
+    def mock_from(self):
+        return self.Mock_from
+
+    @mock_from.setter
+    def mock_from(self, value):
+        self.Mock_from = value
+
+
+def is_main_admin(user):
+    """Returns True if the user is an active superuser."""
+    return bool(user and user.is_authenticated and user.is_active and user.is_superuser)
+
+
+def is_subadmin(user):
+    """Returns True if the user is a staff member but NOT a superuser."""
+    return bool(
+        user
+        and user.is_authenticated
+        and user.is_active
+        and user.is_staff
+        and not user.is_superuser
+    )
+
+
+def get_subadmin_mock_from(user):
+    """
+    Returns the branch string if the user is a subadmin;
+    returns None if user is superuser (unrestricted).
+    """
+    if is_main_admin(user):
+        return None
+    if is_subadmin(user):
+        sub_prof = getattr(user, "subadmin_profile", None)
+        if sub_prof and sub_prof.Mock_from:
+            return sub_prof.Mock_from
+        cand_prof = getattr(user, "candidate_profile", None)
+        if cand_prof and cand_prof.Mock_from:
+            return cand_prof.Mock_from
+        return "BCL_Bhuiyan"
+    return None
+
+
+def can_manage_mock_tests(user):
+    """
+    Returns True if user is Main Admin (superuser) or a SubAdmin authorized by Main Admin.
+    """
+    if is_main_admin(user):
+        return True
+    if is_subadmin(user):
+        sub_prof = getattr(user, "subadmin_profile", None)
+        return bool(sub_prof and sub_prof.can_manage_mocks)
+    return False
 
 # Privacy/security event metadata; no personal response contents.
 from .privacy import SecurityAuditEvent  # noqa: E402,F401
