@@ -829,6 +829,101 @@
                                      data-candidate-answer="{{ q_item.candidate_answer|default:''|escape }}"
                                      data-correct-answer="{{ q_item.question.correct_answer|default:''|escape }}"
                                      data-explanation="{{ q_item.explanation|default:''|escape }}">
+                                    <template class="fb-raw-prompt">{{ q_item.question.question_text|default:'' }}</template>
+                                    <template class="fb-raw-candidate-answer">{{ q_item.candidate_answer|default:'' }}</template>
+                                    <template class="fb-raw-correct-answer">{{ q_item.question.correct_answer|default:'' }}</template>
+                                    <template class="fb-raw-explanation">{{ q_item.explanation|default:'' }}</template>
+                                    {% if q_item.question.has_rich_explanation %}
+                                    <template class="fb-rich-explanation">
+                                        <div class="space-y-3.5">
+                                            {% if q_item.question.answer_location %}
+                                            <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                                <span>📖</span>
+                                                <span>Answer location &mdash; {{ q_item.question.answer_location }}</span>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.passage_excerpt %}
+                                            <div>
+                                                <div class="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 mb-1 flex items-center justify-between">
+                                                    <span>Passage Excerpt</span>
+                                                    <button type="button" class="text-[11px] font-normal normal-case text-sky-600 hover:underline cursor-pointer locate-passage-btn" data-target-q="{{ q_item.global_num }}">
+                                                        Highlight in passage &rarr;
+                                                    </button>
+                                                </div>
+                                                <div class="border-l-4 border-teal-500 pl-3.5 py-1.5 text-slate-700 dark:text-slate-200 italic bg-teal-50/40 dark:bg-teal-950/20 rounded-r-lg">
+                                                    &ldquo;{{ q_item.question.passage_excerpt }}&rdquo;
+                                                </div>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.what_question_asks %}
+                                            <div>
+                                                <div class="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400 mb-1">
+                                                    <span>❓</span>
+                                                    <span>What the question asks</span>
+                                                </div>
+                                                <div class="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-5">
+                                                    {{ q_item.question.what_question_asks|linebreaksbr }}
+                                                </div>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.what_passage_says %}
+                                            <div>
+                                                <div class="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-700 dark:text-slate-300 mb-1">
+                                                    <span>📄</span>
+                                                    <span>What the passage says</span>
+                                                </div>
+                                                <div class="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-5">
+                                                    {{ q_item.question.what_passage_says|linebreaksbr }}
+                                                </div>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.why_answer %}
+                                            <div>
+                                                <div class="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-1">
+                                                    <span>✅</span>
+                                                    <span>Why this is the answer</span>
+                                                </div>
+                                                <div class="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-5">
+                                                    {{ q_item.question.why_answer|linebreaksbr }}
+                                                </div>
+                                            </div>
+                                            {% elif q_item.explanation %}
+                                            <div>
+                                                <div class="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-1">
+                                                    <span>✅</span>
+                                                    <span>Why this is the answer</span>
+                                                </div>
+                                                <div class="text-xs sm:text-sm text-slate-700 dark:text-slate-300 leading-relaxed pl-5">
+                                                    {{ q_item.explanation|linebreaksbr }}
+                                                </div>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.paraphrase %}
+                                            <div>
+                                                <span class="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block mb-1">Paraphrase</span>
+                                                <div class="p-2.5 rounded-lg bg-slate-100 dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 font-mono text-xs text-slate-800 dark:text-slate-200 overflow-x-auto whitespace-pre-wrap">
+                                                    {{ q_item.question.paraphrase }}
+                                                </div>
+                                            </div>
+                                            {% endif %}
+
+                                            {% if q_item.question.tip %}
+                                            <div>
+                                                <span class="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block mb-1">Tip</span>
+                                                <div class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-xs sm:text-sm text-amber-900 dark:text-amber-200 leading-relaxed flex items-start gap-2">
+                                                    <span class="text-base shrink-0">💡</span>
+                                                    <div>{{ q_item.question.tip }}</div>
+                                                </div>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </template>
+                                    {% endif %}
                                     <!-- Fallback while script executes -->
                                     <div class="font-medium question-prompt whitespace-pre-line">{{ q_item.question.question_text }}</div>
                                     <div class="mt-2.5">
@@ -1281,6 +1376,11 @@ document.addEventListener("DOMContentLoaded", function() {
         if (!rawExp || !rawExp.trim()) return [];
         const text = rawExp.trim();
 
+        // Single blank: never split
+        if (!totalBlanks || totalBlanks <= 1) {
+            return [text];
+        }
+
         // 1. Explicit delimiter ;;;
         if (text.includes(";;;")) {
             return text.split(";;;").map(s => s.trim()).filter(Boolean);
@@ -1297,18 +1397,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }
 
-        // 3. Double quotes delimiter: "explanation 1" "explanation 2"
-        const quoteRegex = /["“]([\s\S]*?)["”]/g;
-        const quoteMatches = [];
-        let m;
-        while ((m = quoteRegex.exec(text)) !== null) {
-            const inner = m[1].trim();
-            if (inner) quoteMatches.push(inner);
-        }
-        if (quoteMatches.length >= 2) {
-            return quoteMatches;
-        }
-
         return [text];
     }
 
@@ -1323,10 +1411,20 @@ document.addEventListener("DOMContentLoaded", function() {
     function initFillBlankReviews() {
         document.querySelectorAll(".fill-blank-review-interactive").forEach(container => {
             const globalNum = Number(container.dataset.globalNum) || 1;
-            const prompt = container.dataset.prompt || "";
-            const rawCand = container.dataset.candidateAnswer || "";
-            const rawCorr = container.dataset.correctAnswer || "";
-            const rawExp = container.dataset.explanation || "";
+            const getRawText = (selector, fallback) => {
+                const el = container.querySelector(selector);
+                if (!el) return fallback || "";
+                if (el.content && typeof el.content.textContent === "string" && el.content.textContent) {
+                    return el.content.textContent;
+                }
+                return el.textContent || fallback || "";
+            };
+
+            const prompt = getRawText(".fb-raw-prompt", container.dataset.prompt);
+            const rawCand = getRawText(".fb-raw-candidate-answer", container.dataset.candidateAnswer);
+            const rawCorr = getRawText(".fb-raw-correct-answer", container.dataset.correctAnswer);
+            const rawExp = getRawText(".fb-raw-explanation", container.dataset.explanation);
+            const richTemplate = container.querySelector(".fb-rich-explanation");
 
             const candList = rawCand ? rawCand.split(";;;").map(s => s.trim()) : [];
             const corrList = rawCorr ? rawCorr.split(";;;").map(s => s.trim()) : [];
@@ -1410,7 +1508,7 @@ document.addEventListener("DOMContentLoaded", function() {
                             candVal,
                             corrVal,
                             isCorrect,
-                            explanation: expList[bIdx] || (expList.length === 1 ? rawExp : "")
+                            explanation: (expList && expList[bIdx]) ? expList[bIdx] : rawExp
                         });
 
                         // Inline replacement: red/green underline with text
@@ -1475,7 +1573,9 @@ document.addEventListener("DOMContentLoaded", function() {
                     expBox.id = `exp-${b.blankNum}`;
                     expBox.className = "fb-exp-box explanation-box";
                     expBox.hidden = true;
-                    if (b.explanation && b.explanation.trim()) {
+                    if (richTemplate) {
+                        expBox.innerHTML = richTemplate.innerHTML;
+                    } else if (b.explanation && b.explanation.trim()) {
                         expBox.innerHTML = escapeHtml(b.explanation).replace(/\n/g, "<br>");
                     } else {
                         expBox.innerHTML = `<p class="italic text-slate-500 dark:text-slate-400">Correct answer: <strong class="text-emerald-600 dark:text-emerald-400">${escapeHtml(b.corrVal)}</strong></p>`;
@@ -1504,6 +1604,36 @@ document.addEventListener("DOMContentLoaded", function() {
                         ${isCorrect ? `<span class="fb-cand-val">&check; ${escapeHtml(candVal)}</span>` : `<span class="fb-cand-val">${userText}</span><span class="fb-arrow">&rarr;</span><span class="fb-correct-val">Correct: <strong>${escapeHtml(corrVal)}</strong></span>`}
                     </div>
                 `;
+
+                const extraExp = (expList && expList[bIdx]) ? expList[bIdx] : rawExp;
+                if (richTemplate || (extraExp && extraExp.trim())) {
+                    const expBtn = document.createElement("button");
+                    expBtn.type = "button";
+                    expBtn.className = "fb-exp-btn explanation-btn";
+                    expBtn.dataset.target = `exp-${blankNum}`;
+                    expBtn.innerHTML = `
+                        <span style="display:flex;align-items:center;gap:6px;">
+                            <span>💡</span>
+                            <span>Show explanation &mdash; Q${blankNum}</span>
+                        </span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    `;
+                    extraBlock.appendChild(expBtn);
+
+                    const expBox = document.createElement("div");
+                    expBox.id = `exp-${blankNum}`;
+                    expBox.className = "fb-exp-box explanation-box";
+                    expBox.hidden = true;
+                    if (richTemplate) {
+                        expBox.innerHTML = richTemplate.innerHTML;
+                    } else {
+                        expBox.innerHTML = escapeHtml(extraExp).replace(/\n/g, "<br>");
+                    }
+                    extraBlock.appendChild(expBox);
+                }
+
                 outputNodes.push(extraBlock);
             }
 
