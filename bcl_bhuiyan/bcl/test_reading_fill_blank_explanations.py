@@ -180,3 +180,62 @@ class ReadingFillBlankExplanationTests(TestCase):
         content = response.content.decode("utf-8")
         self.assertIn("if (richTemplate) {", content)
         self.assertIn("expBox.innerHTML = richTemplate.innerHTML;", content)
+
+    def test_heading_letters_beyond_h_and_passage_highlight_in_result_page(self):
+        # Passage with paragraphs extending to I and J
+        passage_with_j = (
+            "A First paragraph text.\n\n"
+            "B Second paragraph text.\n\n"
+            "H Eighth paragraph text.\n\n"
+            "I Ninth paragraph text about improvements.\n\n"
+            'J "Tenth paragraph text quote by governor."'
+        )
+        self.section.passage = passage_with_j
+        self.section.save(update_fields=["passage"])
+
+        q4 = Question.objects.create(
+            section=self.section,
+            question_type=Question.QuestionType.FILL_BLANK,
+            question_text="Paragraph I discusses _____.",
+            correct_answer="improvements",
+            order=4,
+            marks=1,
+            passage_excerpt="I Ninth paragraph text about improvements."
+        )
+
+        now = timezone.now()
+        attempt = CandidateAttempt.objects.create(
+            candidate=self.user,
+            module=self.module,
+            status=CandidateAttempt.AttemptStatus.SUBMITTED,
+            started_at=now,
+            expires_at=now + timedelta(minutes=60),
+            submitted_at=now + timedelta(minutes=30),
+        )
+
+        CandidateAnswer.objects.create(
+            attempt=attempt,
+            question=q4,
+            answer_text="improvements"
+        )
+
+        response = self.client.get(reverse("bcl:exam_result", args=[attempt.pk]))
+        self.assertEqual(response.status_code, 200)
+
+        # Raw passage source exists in the result review page
+        self.assertContains(response, '<div class="raw-passage-text" hidden>')
+
+        # Server-rendered HTML already contains heading badges beyond H (I, J)
+        self.assertContains(response, '<span class="para-letter font-extrabold text-indigo-700 dark:text-indigo-400 mr-2">I</span>')
+        self.assertContains(response, '<span class="para-letter font-extrabold text-indigo-700 dark:text-indigo-400 mr-2">J</span>')
+        self.assertContains(response, 'id="para-I"')
+        self.assertContains(response, 'id="para-J"')
+
+        content = response.content.decode("utf-8")
+        # Ensure formatPassageParagraphs is present in result.html and handles [A-Z] beyond H
+        self.assertIn("function formatPassageParagraphs(rawText)", content)
+        self.assertIn("matchLetter = p.match(regex)", content)
+        self.assertNotIn("matchLetter = trimmed.match(/^([A-H])", content)
+        # Ensure correct transcript ID selector is used in highlightPassageExcerpts
+        self.assertIn("passageEl.closest(\".review-section-transcript\")", content)
+        self.assertIn("transcript-part-", content)

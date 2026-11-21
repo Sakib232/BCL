@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import timedelta
 import json
 import logging
@@ -14,6 +15,8 @@ from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.html import escape
+from django.utils.safestring import mark_safe
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
@@ -2590,6 +2593,51 @@ def render_listening_html(request, attempt):
     return HttpResponse(html_content, content_type="text/html; charset=utf-8")
 
 
+def format_passage_paragraphs(raw_text):
+    """Format reading passage raw text into paragraphs with bold paragraph heading letters (A, B, C...)."""
+    if not raw_text:
+        return ""
+    paragraphs = re.split(r'\r?\n\s*\r?\n|(?=\r?\n\s*[A-Z][\s\.\:\-\–\—\)])', raw_text)
+    merged_paragraphs = []
+    i = 0
+    while i < len(paragraphs):
+        p = (paragraphs[i] or "").strip()
+        if not p:
+            i += 1
+            continue
+        if re.match(r'^[A-Z]$', p) and (i + 1 < len(paragraphs)):
+            next_p = (paragraphs[i + 1] or "").strip()
+            merged_paragraphs.append(f"{p} {next_p}")
+            i += 2
+        else:
+            merged_paragraphs.append(p)
+            i += 1
+
+    regex = r'^([A-Z])(?:\s*[\.\:\-\–\—\)]\s*|\s*\r?\n\s*|\s+(?=[A-Z"“\'‘’0-9]))(.*)$'
+    output = []
+    for p in merged_paragraphs:
+        m = re.match(regex, p, flags=re.DOTALL)
+        if m:
+            letter = m.group(1)
+            content = m.group(2).strip()
+            escaped_content = escape(content).replace('\n', '<br>')
+            output.append(
+                f'<div class="para-block mb-6 relative" id="para-{letter}">'
+                f'<p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]">'
+                f'<span class="para-letter font-extrabold text-indigo-700 dark:text-indigo-400 mr-2">{letter}</span>'
+                f'<span>{escaped_content}</span>'
+                f'</p></div>'
+            )
+        else:
+            escaped_content = escape(p).replace('\n', '<br>')
+            output.append(
+                f'<div class="para-block mb-6 relative">'
+                f'<p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]">{escaped_content}</p>'
+                f'</div>'
+            )
+    return mark_safe("".join(output))
+
+
 @login_required
 @require_GET
 def exam_session(request, attempt_id):
@@ -2681,6 +2729,10 @@ def exam_session(request, attempt_id):
                 )
         except (OSError, ValueError):
             logger.warning("Unable to resolve module content file for attempt %s", attempt.pk)
+
+    for s in sections:
+        if getattr(s, "passage", None):
+            s.formatted_passage = format_passage_paragraphs(s.passage)
 
     return render(request, "exam/session.html", {
         "attempt": attempt,
@@ -3283,8 +3335,11 @@ def exam_result(request, attempt_id):
                 "options": list(q.options.order_by("order", "option_key")),
             })
 
+        formatted_passage = format_passage_paragraphs(section.passage) if getattr(section, "passage", None) else ""
+        section.formatted_passage = formatted_passage
         sections_data.append({
             "section": section,
+            "formatted_passage": formatted_passage,
             "correct_count": sec_correct,
             "total_count": sec_total,
             "questions": questions_data,

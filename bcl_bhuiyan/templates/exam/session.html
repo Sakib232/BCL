@@ -128,7 +128,7 @@
                         </p>
                     </div>
                     <div class="px-6 py-6 space-y-6 selectable-passage text-[15.5px] leading-[1.9] text-gray-800 tracking-[0.01em]" id="activePassageText">
-                        {% for section in sections %}{% if forloop.first %}{{ section.passage|linebreaks }}{% endif %}{% endfor %}
+                        {% for section in sections %}{% if forloop.first %}{% if section.formatted_passage %}{{ section.formatted_passage|safe }}{% else %}{{ section.passage|linebreaks }}{% endif %}{% endif %}{% endfor %}
                     </div>
                     <div class="px-6 pb-6 pt-2 border-t border-blue-100">
                         <label class="notes-label block text-xs font-bold text-gray-500 mb-1" for="readingPassageNotes">Private passage notes (saved in this browser)</label>

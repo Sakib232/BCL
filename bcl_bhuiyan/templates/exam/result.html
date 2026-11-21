@@ -24,6 +24,15 @@
         })();
     </script>
     <style>
+        .para-letter {
+            font-weight: 800;
+            color: #4338ca;
+            margin-right: 0.5rem;
+            display: inline-block;
+        }
+        .dark .para-letter, html.dark .para-letter {
+            color: #818cf8 !important;
+        }
         .passage-excerpt-highlight {
             background-color: rgba(56, 189, 248, 0.18);
             border: 1px solid rgba(56, 189, 248, 0.5);
@@ -754,8 +763,13 @@
 
                         {% if s_data.section.passage %}
                         <div class="passage-body">
-                            {{ s_data.section.passage|linebreaks }}
+                            {% if s_data.formatted_passage %}
+                                {{ s_data.formatted_passage|safe }}
+                            {% else %}
+                                {{ s_data.section.passage|linebreaks }}
+                            {% endif %}
                         </div>
+                        <div class="raw-passage-text" hidden>{{ s_data.section.passage }}</div>
                         {% else %}
                         <p class="text-slate-400 italic">No passage text available for this part.</p>
                         {% endif %}
@@ -1851,12 +1865,55 @@ document.addEventListener("DOMContentLoaded", function() {
         highlightPassageExcerpts();
     });
 
+    function formatPassageParagraphs(rawText) {
+        if (!rawText) return "";
+        const paragraphs = rawText.split(/\r?\n\s*\r?\n|(?=\r?\n\s*[A-Z][\s\.\:\-\–\—\)])/);
+        const mergedParagraphs = [];
+        let i = 0;
+        while (i < paragraphs.length) {
+            const p = (paragraphs[i] || "").trim();
+            if (!p) {
+                i++;
+                continue;
+            }
+            if (/^[A-Z]$/.test(p) && i + 1 < paragraphs.length) {
+                const nextP = (paragraphs[i + 1] || "").trim();
+                mergedParagraphs.push(p + " " + nextP);
+                i += 2;
+            } else {
+                mergedParagraphs.push(p);
+                i++;
+            }
+        }
+
+        const regex = /^([A-Z])(?:\s*[\.\:\-\–\—\)]\s*|\s*\r?\n\s*|\s+(?=[A-Z"“\'‘’0-9]))(.*)$/s;
+        return mergedParagraphs.map((p) => {
+            const matchLetter = p.match(regex);
+            if (matchLetter) {
+                const letter = matchLetter[1];
+                const content = matchLetter[2];
+                return `<div class="para-block mb-6 relative" id="para-${letter}"><p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]"><span class="para-letter font-extrabold text-indigo-700 dark:text-indigo-400 mr-2">${letter}</span><span>${content.trim()}</span></p></div>`;
+            }
+            return `<div class="para-block mb-6 relative"><p class="text-[15.5px] leading-[1.9] text-gray-800 dark:text-[#E1E1E1] tracking-[0.01em]">${p}</p></div>`;
+        }).filter(Boolean).join("");
+    }
+
     function highlightPassageExcerpts() {
         document.querySelectorAll(".passage-body").forEach((passageEl) => {
-            const partSection = passageEl.closest(".review-part-content");
+            const partSection = passageEl.closest(".review-section-transcript") || passageEl.closest(".review-part-content");
             const partId = partSection ? partSection.id : "";
-            const partIndex = partId.replace("part-content-", "");
+            const partIndex = partId.replace(/^(?:transcript-part-|part-content-)/, "");
             const questionsPart = document.getElementById("questions-part-" + partIndex);
+
+            // Format paragraph headings if not already server-rendered
+            if (!passageEl.querySelector(".para-block")) {
+                const rawEl = partSection ? partSection.querySelector(".raw-passage-text") : null;
+                const rawText = rawEl ? (rawEl.content ? rawEl.content.textContent : rawEl.textContent) : (passageEl.dataset.rawPassage || "");
+                if (rawText && rawText.trim()) {
+                    passageEl.innerHTML = formatPassageParagraphs(rawText);
+                }
+            }
+
             if (!questionsPart) return;
 
             const cards = questionsPart.querySelectorAll(".review-question-card[data-passage-excerpt]");
@@ -1868,8 +1925,20 @@ document.addEventListener("DOMContentLoaded", function() {
                 if (!excerpt || excerpt.length < 5) return;
 
                 // Escape regex special chars & match with flexible whitespace
-                const escaped = excerpt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-                const regex = new RegExp(`(${escaped})`, "i");
+                let escaped = excerpt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+                let regex = new RegExp(`(${escaped})`, "i");
+
+                // If excerpt started with a paragraph letter prefix like "A " or "A. ", try stripped if not found
+                if (!regex.test(html) && /^[A-Z][\s\.\:\-]/i.test(excerpt)) {
+                    const stripped = excerpt.replace(/^[A-Z][\s\.\:\-]\s*/i, "").trim();
+                    if (stripped.length >= 5) {
+                        const strippedEscaped = stripped.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+                        const strippedRegex = new RegExp(`(${strippedEscaped})`, "i");
+                        if (strippedRegex.test(html)) {
+                            regex = strippedRegex;
+                        }
+                    }
+                }
 
                 if (regex.test(html)) {
                     html = html.replace(regex, (match) => {
