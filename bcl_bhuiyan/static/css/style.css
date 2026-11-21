@@ -48,11 +48,16 @@ body {
 
 .logo img,
 .auth-logo img {
-    width: 34px;
-    height: 34px;
-    object-fit: cover;
-    border-radius: 9px;
-    box-shadow: 0 6px 14px rgba(36, 87, 214, 0.24);
+    height: 38px;
+    max-height: 42px;
+    width: auto;
+    max-width: 170px;
+    object-fit: contain;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(36, 87, 214, 0.16);
+    background: transparent;
+    display: inline-block;
+    vertical-align: middle;
 }
 
 .logo::before {

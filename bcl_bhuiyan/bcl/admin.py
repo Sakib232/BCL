@@ -1,3 +1,5 @@
+import html
+import re
 from decimal import Decimal
 from django import forms
 from django.contrib import admin, messages
@@ -269,7 +271,248 @@ class QuestionInlineFormSet(BaseInlineFormSet):
                 used_orders.add(instance.order)
 
 
+def parse_option_line(line):
+    """
+    Parses a single line of an option string.
+    Supports formats like:
+      - 'A. Option text'
+      - 'B) Option text *'
+      - 'C. Option text [correct]'
+      - 'TRUE) TRUE [correct]'
+      - 'NOT GIVEN) NOT GIVEN'
+      - 'iv. Matching heading *'
+      - 'Key | Text | 1'
+    """
+    line = (line or "").strip()
+    if not line:
+        return None
+    is_correct = False
+    if re.search(r"\[\s*correct\s*\]|\(\s*correct\s*\)", line, re.IGNORECASE):
+        is_correct = True
+        line = re.sub(r"\[\s*correct\s*\]|\(\s*correct\s*\)", "", line, flags=re.IGNORECASE).strip()
+    if line.endswith("*"):
+        is_correct = True
+        line = line[:-1].strip()
+
+    if "|" in line:
+        parts = [p.strip() for p in line.split("|")]
+        key = parts[0]
+        text = parts[1] if len(parts) > 1 else parts[0]
+        if len(parts) > 2 and parts[2].lower() in ("1", "true", "yes", "correct"):
+            is_correct = True
+    else:
+        m = re.match(r"^([A-Za-z0-9\s_\-]+?)[\)\.\:\-]\s*(.*)$", line)
+        if m:
+            key = m.group(1).strip()
+            text = m.group(2).strip()
+        else:
+            key = ""
+            text = line.strip()
+
+    return {
+        "key": key,
+        "text": text,
+        "is_correct": is_correct,
+    }
+
+
+def sync_quick_options(question, quick_text):
+    """
+    Synchronizes multiline or JSON quick options into QuestionOption database records
+    and keeps question.correct_answer in sync.
+    """
+    if not question or not question.pk:
+        return []
+
+    import json
+    parsed_items = []
+    correct_keys = []
+    raw = (quick_text or "").strip()
+
+    if raw.startswith("[") and raw.endswith("]"):
+        try:
+            data = json.loads(raw)
+            for idx, item in enumerate(data, start=1):
+                key = str(item.get("key") or (chr(ord("A") + idx - 1) if idx <= 26 else str(idx))).strip()
+                text = str(item.get("text") or key).strip()
+                is_cor = bool(item.get("is_correct"))
+                if is_cor:
+                    correct_keys.append(key)
+                parsed_items.append({
+                    "key": key,
+                    "text": text,
+                    "order": int(item.get("order") or idx),
+                    "is_correct": is_cor,
+                })
+        except Exception:
+            pass
+
+    if not parsed_items:
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        for idx, line in enumerate(lines, start=1):
+            parsed = parse_option_line(line)
+            if not parsed:
+                continue
+            key = parsed["key"] or (chr(ord("A") + idx - 1) if idx <= 26 else str(idx))
+            text = parsed["text"] or key
+            is_cor = parsed["is_correct"]
+            if is_cor:
+                correct_keys.append(key)
+            parsed_items.append({
+                "key": key,
+                "text": text,
+                "order": idx,
+                "is_correct": is_cor,
+            })
+
+    kept_keys = [item["key"] for item in parsed_items]
+    if kept_keys:
+        question.options.exclude(option_key__in=kept_keys).delete()
+    else:
+        question.options.all().delete()
+
+    saved_options = []
+    for item in parsed_items:
+        opt, _ = QuestionOption.objects.update_or_create(
+            question=question,
+            option_key=item["key"],
+            defaults={
+                "option_text": item["text"],
+                "order": item["order"],
+                "is_correct": item["is_correct"],
+            },
+        )
+        saved_options.append(opt)
+
+    if correct_keys:
+        question.correct_answer = ", ".join(correct_keys)
+        question.save(update_fields=["correct_answer"])
+
+    return saved_options
+
+
+class QuestionOptionsTabularWidget(forms.Widget):
+    """
+    Renders the exact TabularInline table for options directly inside the Section Question inline,
+    so non-technical and technical users have the exact same familiar tabular interface as the Question page.
+    """
+    def render(self, name, value, attrs=None, renderer=None):
+        raw_value = value or ""
+        raw_str = str(raw_value).strip()
+        parsed_rows = []
+
+        if raw_str.startswith("[") and raw_str.endswith("]"):
+            try:
+                import json
+                data = json.loads(raw_str)
+                for idx, item in enumerate(data, start=1):
+                    parsed_rows.append({
+                        "order": int(item.get("order") or idx),
+                        "key": str(item.get("key") or (chr(ord("A") + idx - 1) if idx <= 26 else str(idx))),
+                        "text": str(item.get("text") or ""),
+                        "is_correct": bool(item.get("is_correct")),
+                    })
+            except Exception:
+                pass
+
+        if not parsed_rows:
+            lines = [l.strip() for l in raw_str.splitlines() if l.strip()]
+            for idx, line in enumerate(lines, start=1):
+                p = parse_option_line(line)
+                if p:
+                    parsed_rows.append({
+                        "order": idx,
+                        "key": p["key"] or (chr(ord("A") + idx - 1) if idx <= 26 else str(idx)),
+                        "text": p["text"],
+                        "is_correct": p["is_correct"],
+                    })
+
+        if not parsed_rows:
+            parsed_rows = [
+                {"order": 1, "key": "A", "text": "", "is_correct": False},
+                {"order": 2, "key": "B", "text": "", "is_correct": False},
+                {"order": 3, "key": "C", "text": "", "is_correct": False},
+                {"order": 4, "key": "D", "text": "", "is_correct": False},
+            ]
+
+        rows_html = []
+        for r in parsed_rows:
+            checked_attr = 'checked="checked"' if r["is_correct"] else ""
+            escaped_text = html.escape(r["text"])
+            escaped_key = html.escape(r["key"])
+            rows_html.append(f"""
+              <tr class="mcq-table-row" style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+                <td style="text-align: center; padding: 8px 6px;">
+                  <input type="number" class="mcq-field-order" value="{r['order']}" min="1" max="99" style="width: 50px; text-align: center; padding: 6px 4px; border-radius: 4px; font-weight: 600; background: #1e293b; color: #f8fafc; border: 1px solid #475569;" />
+                </td>
+                <td style="text-align: center; padding: 8px 6px;">
+                  <input type="text" class="mcq-field-key" value="{escaped_key}" placeholder="e.g. A" style="width: 100px; text-align: center; padding: 6px 8px; font-weight: 700; text-transform: uppercase; border-radius: 4px; background: #1e293b; color: #38bdf8; border: 1px solid #475569;" />
+                </td>
+                <td style="padding: 8px 6px;">
+                  <input type="text" class="mcq-field-text" value="{escaped_text}" placeholder="Enter choice text..." style="width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 4px; background: #1e293b; color: #ffffff; border: 1px solid #475569;" />
+                </td>
+                <td style="text-align: center; padding: 8px 6px;">
+                  <input type="checkbox" class="mcq-field-correct" {checked_attr} style="width: 18px; height: 18px; cursor: pointer; accent-color: #22c55e;" title="Mark as correct answer" />
+                </td>
+                <td style="text-align: center; padding: 8px 6px;">
+                  <input type="checkbox" class="mcq-field-delete" style="width: 18px; height: 18px; cursor: pointer; accent-color: #ef4444;" title="Delete this option" />
+                </td>
+              </tr>
+            """)
+
+        all_rows_str = "\n".join(rows_html)
+        escaped_raw = html.escape(raw_value)
+
+        return mark_safe(f"""
+        <div class="mcq-tabular-wrapper" style="margin: 8px 0 16px 0; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden; background: #182234; box-shadow: 0 2px 8px rgba(0,0,0,0.25);">
+          <!-- Header Bar styled exactly like Django TabularInline -->
+          <div style="background: #1e3a5f; color: #ffffff; padding: 10px 14px; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <span>⬇ OPTIONS / CHOICES (MCQ · MATCHING · MULTI-SELECT · TFNG · YNNG)</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button type="button" class="btn-mcq-preset" data-preset="abcd" style="background: #0f172a; color: #cbd5e1; border: 1px solid #475569; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">⚡ A, B, C, D</button>
+              <button type="button" class="btn-mcq-preset" data-preset="tfng" style="background: #0f172a; color: #cbd5e1; border: 1px solid #475569; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">⚡ TRUE / FALSE / NOT GIVEN</button>
+              <button type="button" class="btn-mcq-preset" data-preset="ynng" style="background: #0f172a; color: #cbd5e1; border: 1px solid #475569; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;">⚡ YES / NO / NOT GIVEN</button>
+            </div>
+          </div>
+
+          <table class="mcq-options-table" style="width: 100%; border-collapse: collapse; background: #0f172a;">
+            <thead>
+              <tr style="background: #131d2e; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                <th style="padding: 8px 10px; font-size: 11px; text-transform: uppercase; color: #94a3b8; width: 70px; text-align: center;">ORDER</th>
+                <th style="padding: 8px 10px; font-size: 11px; text-transform: uppercase; color: #94a3b8; width: 120px; text-align: center;">OPTION KEY</th>
+                <th style="padding: 8px 10px; font-size: 11px; text-transform: uppercase; color: #94a3b8; text-align: left;">OPTION TEXT</th>
+                <th style="padding: 8px 10px; font-size: 11px; text-transform: uppercase; color: #94a3b8; width: 110px; text-align: center;">IS CORRECT</th>
+                <th style="padding: 8px 10px; font-size: 11px; text-transform: uppercase; color: #94a3b8; width: 80px; text-align: center;">DELETE?</th>
+              </tr>
+            </thead>
+            <tbody class="mcq-table-tbody">
+              {all_rows_str}
+            </tbody>
+          </table>
+
+          <div style="padding: 10px 14px; background: #131d2e; border-top: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+            <a href="javascript:void(0)" class="btn-mcq-add-row" style="color: #22c55e; font-weight: 700; font-size: 13px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">
+              + Add another Option / Choice
+            </a>
+            <span style="font-size: 11.5px; color: #64748b;">
+              Tick <b>IS CORRECT</b> for the right answer. Saved automatically into Question Options.
+            </span>
+          </div>
+
+          <!-- Hidden raw textarea for standard Django form submission -->
+          <textarea name="{name}" class="mcq-raw-textarea" style="display: none;">{escaped_raw}</textarea>
+        </div>
+        """)
+
+
 class QuestionAdminForm(forms.ModelForm):
+    quick_options = forms.CharField(
+        label="⬇ Options / Choices",
+        required=False,
+        widget=QuestionOptionsTabularWidget(),
+        help_text="Edit choices directly in the table above. Options are automatically saved into Question Options.",
+    )
+
     class Meta:
         model = Question
         fields = "__all__"
@@ -349,6 +592,40 @@ class QuestionAdminForm(forms.ModelForm):
             }),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            opts = list(self.instance.options.order_by("order", "id"))
+            if opts and not self.initial.get("quick_options"):
+                lines = [
+                    f"{o.option_key}) {o.option_text}{' [correct]' if o.is_correct else ''}"
+                    for o in opts
+                ]
+                self.initial["quick_options"] = "\n".join(lines)
+
+    def save(self, commit=True):
+        instance = super().save(commit=commit)
+
+        def sync_options():
+            if not instance.pk:
+                return
+            cleaned = getattr(self, "cleaned_data", {})
+            quick = (cleaned.get("quick_options") or "").strip()
+            if quick:
+                sync_quick_options(instance, quick)
+
+        if commit:
+            sync_options()
+        else:
+            old_save_m2m = getattr(self, "save_m2m", None)
+            def new_save_m2m():
+                if old_save_m2m:
+                    old_save_m2m()
+                sync_options()
+            self.save_m2m = new_save_m2m
+
+        return instance
+
 
 # Question types that use selectable options (MCQ, matching, multi-select)
 MCQ_OPTION_TYPES = (
@@ -372,11 +649,11 @@ class ExamModuleInline(admin.TabularInline):
     fields = (
         "module_type",
         "duration_minutes",
-        "module_file",
         "sections_summary",
         "is_active",
+        "quick_actions",
     )
-    readonly_fields = ("sections_summary",)
+    readonly_fields = ("sections_summary", "quick_actions")
 
     @admin.display(description="Sections & Content")
     def sections_summary(self, obj):
@@ -386,10 +663,30 @@ class ExamModuleInline(admin.TabularInline):
         q_count = sum(s.questions.count() for s in obj.sections.all())
         url = reverse("admin:bcl_examsection_changelist") + f"?module__id__exact={obj.pk}"
         return format_html(
-            '<a class="admin-action-link" href="{}">{} sections ({} Qs) ➔</a>',
+            '<a class="admin-action-link" href="{}" style="font-weight:600;">{} sections ({} Qs) ➔</a>',
             url,
             s_count,
             q_count,
+        )
+
+    @admin.display(description="Direct Action")
+    def quick_actions(self, obj):
+        if not obj.pk:
+            return "Save first"
+        change_url = reverse("admin:bcl_exammodule_change", args=[obj.pk])
+        add_sec_url = reverse("admin:bcl_examsection_add") + f"?module={obj.pk}"
+        icon = {"listening": "🎧", "reading": "📖", "writing": "✍️"}.get(obj.module_type, "📝")
+        return format_html(
+            '<div style="display:flex;gap:6px;align-items:center;">'
+            '<a class="button" href="{}" style="padding:4px 10px;background:#4f46e5;color:white;border-radius:5px;text-decoration:none;font-weight:600;font-size:12px;">'
+            '{} Edit {} ➔</a>'
+            '<a class="button" href="{}" style="padding:4px 10px;background:#059669;color:white;border-radius:5px;text-decoration:none;font-weight:600;font-size:12px;">'
+            '➕ Add Section</a>'
+            '</div>',
+            change_url,
+            icon,
+            obj.get_module_type_display(),
+            add_sec_url,
         )
 
 
@@ -403,12 +700,29 @@ class ExamSectionInline(admin.StackedInline):
     fields = (
         "order",
         "title",
+        "quick_section_editor",
         "instructions",
         "passage_instructions",
         "passage",
         "audio_file",
         "image",
     )
+    readonly_fields = ("quick_section_editor",)
+
+    @admin.display(description="Question Setter Studio")
+    def quick_section_editor(self, obj):
+        if not obj or not obj.pk:
+            return "Save section first to launch full question editor."
+        url = reverse("admin:bcl_examsection_change", args=[obj.pk])
+        q_count = obj.questions.count()
+        return format_html(
+            '<div style="margin: 6px 0;">'
+            '<a class="button" href="{}" style="padding:6px 14px;background:#0284c7;color:white;border-radius:6px;text-decoration:none;font-weight:700;font-size:13px;">'
+            '📝 Open Section Editor (Passage + Questions + Options — {} Qs) ➔</a>'
+            '</div>',
+            url,
+            q_count,
+        )
 
 
 class QuestionOptionInlineForQuestion(admin.TabularInline):
@@ -452,30 +766,75 @@ class QuestionInline(admin.StackedInline):
     form = QuestionAdminForm
     formset = QuestionInlineFormSet
     extra = 0
-    show_change_link = True  # ← Click "Change" to open the full Question page with MCQ options
+    show_change_link = True
     classes = ("collapse",)
-    fields = (
-        "order",
-        "question_type",
-        "question_text",
-        "question_instructions",
-        "answer_count",
-        "marks",
-        "correct_answer",
-        "explanation",
-        "image",
-        "table_content",
-        "options_preview",
+    fieldsets = (
+        (
+            "1. Question Details & Prompt",
+            {
+                "fields": (
+                    ("order", "question_type", "marks"),
+                    "question_instructions",
+                    "question_text",
+                ),
+            },
+        ),
+        (
+            "2. Options / Choices (MCQ · Matching · Multi-Select · TFNG · YNNG)",
+            {
+                "fields": ("quick_options",),
+                "description": (
+                    "Options / Choices: Fill in the options table below (Order, Option Key, Option Text, and tick Is Correct). "
+                    "Options are automatically saved directly into Question Options!"
+                ),
+            },
+        ),
+        (
+            "3. Answer Key, Explanation & Highlights",
+            {
+                "fields": (
+                    "correct_answer",
+                    "explanation",
+                    ("answer_location", "passage_excerpt"),
+                ),
+                "description": (
+                    "• Correct Answer: Enter A, B, C, D, TRUE/FALSE, or word for fill-in-blanks.\n"
+                    "• Explanation: Detailed reason shown on candidate's result page.\n"
+                    "• Answer Location: e.g. 'Paragraph 2, Line 4'.\n"
+                    "• Passage Excerpt: Exact text in the passage to highlight on candidate result page."
+                ),
+            },
+        ),
+        (
+            "4. Additional Explanations & Diagnostic Aids (Optional)",
+            {
+                "fields": (
+                    ("what_question_asks", "what_passage_says"),
+                    ("why_answer", "paraphrase"),
+                    "tip",
+                ),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "5. Diagrams, Images & Tables (Optional)",
+            {
+                "fields": (
+                    ("image", "table_content"),
+                ),
+                "classes": ("collapse",),
+            },
+        ),
     )
-    readonly_fields = ("options_preview",)
+    readonly_fields = ()
 
-    @admin.display(description="MCQ Options (current)")
+    @admin.display(description="MCQ Options (saved in DB)")
     def options_preview(self, obj):
         """Show existing MCQ options inline so setter can verify without leaving ExamSection."""
         if not obj or not obj.pk:
             return format_html(
                 '<span style="color:#64748b;font-size:12px;">'
-                "Save question first, then click <b>Change ↗</b> above to add MCQ options."
+                "Enter Option A, B, C, D above and click <b>Save</b> to store options."
                 "</span>"
             )
         if obj.question_type not in MCQ_OPTION_TYPES:
@@ -487,13 +846,10 @@ class QuestionInline(admin.StackedInline):
             )
         opts = list(obj.options.order_by("order", "option_key"))
         if not opts:
-            url = reverse("admin:bcl_question_change", args=[obj.pk])
             return format_html(
-                '<span style="color:#dc2626;font-weight:600;">'
-                "⚠ No options added yet — "
-                '<a href="{}" target="_blank">click here to add A / B / C / D options ↗</a>'
-                "</span>",
-                url,
+                '<span style="color:#d97706;font-weight:600;">'
+                "Type Option A, B, C, D in the boxes above and click Save!"
+                "</span>"
             )
         rows = []
         for o in opts:
@@ -512,14 +868,6 @@ class QuestionInline(admin.StackedInline):
                     tick,
                 )
             )
-        url = reverse("admin:bcl_question_change", args=[obj.pk])
-        rows.append(
-            format_html(
-                ' &nbsp;<a href="{}" target="_blank" style="font-size:11px;color:#3b82f6;">'
-                "Edit options ↗</a>",
-                url,
-            )
-        )
         return mark_safe("".join(str(r) for r in rows))
 
 
@@ -569,6 +917,20 @@ class IELTSMockTestAdmin(MockTestManagementAdmin):
         with transaction.atomic():
             for obj in queryset:
                 self.delete_model(request, obj)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # Automatically initialize the 3 standard IELTS modules if they don't exist yet
+        for m_type, dur in [
+            (ExamModule.ModuleType.LISTENING, 40),
+            (ExamModule.ModuleType.READING, 60),
+            (ExamModule.ModuleType.WRITING, 60),
+        ]:
+            ExamModule.objects.get_or_create(
+                mock_test=obj,
+                module_type=m_type,
+                defaults={"duration_minutes": dur, "is_active": True}
+            )
 
     fieldsets = (
         (
@@ -764,6 +1126,19 @@ class ExamSectionAdmin(MockTestManagementAdmin):
         "module__mock_test",
     )
     inlines = [QuestionInline]
+
+    def get_changeform_initial_data(self, request):
+        initial = super().get_changeform_initial_data(request)
+        module_id = request.GET.get("module")
+        if module_id:
+            try:
+                mod = ExamModule.objects.get(pk=module_id)
+                initial["module"] = mod
+                max_order = ExamSection.objects.filter(module=mod).aggregate(m=models.Max("order"))["m"] or 0
+                initial["order"] = max_order + 1
+            except (ExamModule.DoesNotExist, ValueError):
+                pass
+        return initial
 
     fieldsets = (
         (
@@ -1400,10 +1775,40 @@ class WritingEvaluationAdmin(ScopedCandidateDataAdmin):
 
 @admin.register(MockFromOption)
 class MockFromOptionAdmin(QuestionSetterBaseAdmin):
-    list_display = ("name", "is_active", "created_at")
+    list_display = ("name", "logo_preview", "is_active", "created_at")
     list_filter = ("is_active", "created_at")
     search_fields = ("name",)
     list_editable = ("is_active",)
+    readonly_fields = ("logo_preview",)
+
+    @admin.display(description="Logo / Favicon")
+    def logo_preview(self, obj):
+        if obj and obj.image:
+            return format_html(
+                '<img src="{}" style="height:32px;max-width:120px;object-fit:contain;border-radius:4px;border:1px solid #cbd5e1;background:#fff;padding:2px;" alt="{}" />',
+                obj.image.url,
+                obj.name,
+            )
+        return format_html(
+            '<span style="display:inline-flex;align-items:center;gap:6px;color:#64748b;font-size:12px;">'
+            '<img src="/static/images/bcl.jpg" style="height:24px;width:auto;border-radius:4px;opacity:0.7;" alt="Default" />'
+            'Default BCL Logo</span>'
+        )
+
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "name",
+                    "image",
+                    "logo_preview",
+                    "is_active",
+                ),
+                "description": "Upload a custom branch logo/image. It is used as the navbar header logo and favicon for candidates and subadmins of this Mock_from branch. If left empty, the default BCL logo is used.",
+            },
+        ),
+    )
 
     def has_module_permission(self, request):
         return request.user.is_superuser
@@ -2271,6 +2676,21 @@ def custom_admin_index(request, extra_context=None):
         .count()
     )
 
+    mock_studio_items = []
+    if can_mocks:
+        mocks_qs = (
+            IELTSMockTest.objects.prefetch_related("modules__sections__questions")
+            .order_by("test_number")
+        )
+        for m in mocks_qs:
+            mods = {mod.module_type: mod for mod in m.modules.all()}
+            mock_studio_items.append({
+                "mock": m,
+                "listening": mods.get(ExamModule.ModuleType.LISTENING),
+                "reading": mods.get(ExamModule.ModuleType.READING),
+                "writing": mods.get(ExamModule.ModuleType.WRITING),
+            })
+
     extra_context.update({
         "is_subadmin": is_sub,
         "subadmin_branch": sub_branch,
@@ -2283,6 +2703,7 @@ def custom_admin_index(request, extra_context=None):
         "pending_writing": pending_writing,
         "recent_student_results": recent_student_results,
         "recent_full_mocks": recent_full_mocks,
+        "mock_studio_items": mock_studio_items,
     })
 
     return _orig_admin_index(request, extra_context=extra_context)

@@ -1,4 +1,5 @@
 from django.conf import settings
+from .models import MockFromOption
 
 
 def platform_branding(request):
@@ -14,9 +15,14 @@ def platform_branding(request):
             if sub_prof and getattr(sub_prof, "Mock_from", None):
                 user_branch = sub_prof.Mock_from
 
+    logo_url = MockFromOption.get_logo_url_for_branch(user_branch)
+
     return {
         "platform_name": user_branch or default_brand,
         "brand_name": user_branch or default_brand,
         "user_mock_from": user_branch or default_brand,
         "default_platform_name": default_brand,
+        "platform_logo_url": logo_url,
+        "brand_logo_url": logo_url,
+        "platform_favicon_url": logo_url,
     }

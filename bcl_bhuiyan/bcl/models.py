@@ -578,6 +578,13 @@ class CandidateProfile(models.Model):
 
 class MockFromOption(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Option Name")
+    image = models.ImageField(
+        upload_to="mock_from/logos/",
+        blank=True,
+        null=True,
+        verbose_name="Branch Logo / Favicon",
+        help_text="Custom logo for this Mock_from branch. Used in the navbar header and as the favicon. If empty, the default BCL logo is used.",
+    )
     is_active = models.BooleanField(
         default=True,
         verbose_name="Is Active",
@@ -592,6 +599,35 @@ class MockFromOption(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def logo_url(self):
+        if self.image:
+            try:
+                return self.image.url
+            except Exception:
+                pass
+        return "/static/images/bcl.jpg"
+
+    @classmethod
+    def get_logo_url_for_branch(cls, branch_name):
+        if branch_name:
+            try:
+                cleaned_name = str(branch_name).strip()
+                obj = cls.objects.filter(name__iexact=cleaned_name).first()
+                if obj and obj.image:
+                    return obj.image.url
+            except Exception:
+                pass
+
+        try:
+            first_with_logo = cls.objects.filter(is_active=True).exclude(image="").exclude(image__isnull=True).first()
+            if first_with_logo and first_with_logo.image:
+                return first_with_logo.image.url
+        except Exception:
+            pass
+
+        return "/static/images/bcl.jpg"
 
     @classmethod
     def get_choices(cls):

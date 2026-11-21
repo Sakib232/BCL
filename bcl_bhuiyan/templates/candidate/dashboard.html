@@ -230,7 +230,7 @@
 
     <a href="{% url 'bcl:home' %}"
        class="auth-logo">
-        <img src="{% static 'images/bcl.jpg' %}" alt="{{ candidate.candidate_profile.Mock_from|default:platform_name }} logo">
+        <img src="{{ platform_logo_url|default:'/static/images/bcl.jpg' }}" alt="{{ candidate.candidate_profile.Mock_from|default:platform_name }} logo" style="height:36px;max-height:40px;width:auto;max-width:160px;object-fit:contain;vertical-align:middle;">
         <span>{{ candidate.candidate_profile.Mock_from|default:platform_name }}</span>
     </a>
 

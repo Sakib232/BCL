@@ -25,7 +25,10 @@
 {% endblock %}
 
 {% block branding %}
-<h1 id="site-name"><a href="{% url 'admin:index' %}">{{ platform_name }}</a></h1>
+<h1 id="site-name" style="display:inline-flex;align-items:center;gap:10px;">
+  <img src="{{ platform_logo_url|default:'/static/images/bcl.jpg' }}" alt="{{ platform_name }}" style="height:32px;max-height:36px;width:auto;max-width:140px;object-fit:contain;border-radius:4px;vertical-align:middle;background:#fff;padding:2px;" />
+  <a href="{% url 'admin:index' %}">{{ platform_name }}</a>
+</h1>
 {% if user.is_anonymous %}
   {% include "admin/color_theme_toggle.html" %}
 {% endif %}
