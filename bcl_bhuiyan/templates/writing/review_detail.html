@@ -871,16 +871,26 @@
                         <div class="question-panel-body">
                             <p class="prompt-content-text">{{ task.question.question_text|linebreaksbr }}</p>
 
-                            {% if task.question.section.image %}
+                            {% if task.question.image or task.question.section.image %}
                                 <div class="task-visual-wrap">
                                     <div class="visual-bar">
                                         <span>📊 Reference Graphic / Diagram</span>
-                                        <a href="{% url 'bcl:staff_section_image' attempt.pk task.question.section.pk %}" target="_blank" class="visual-link" title="Open full resolution in new tab">
-                                            🔍 View Full Diagram ↗
-                                        </a>
+                                        {% if task.question.image %}
+                                            <a href="{{ task.question.image.url }}" target="_blank" class="visual-link" title="Open full resolution in new tab">
+                                                🔍 View Full Diagram ↗
+                                            </a>
+                                        {% else %}
+                                            <a href="{% url 'bcl:staff_section_image' attempt.pk task.question.section.pk %}" target="_blank" class="visual-link" title="Open full resolution in new tab">
+                                                🔍 View Full Diagram ↗
+                                            </a>
+                                        {% endif %}
                                     </div>
                                     <div class="task-visual-box">
-                                        <img src="{% url 'bcl:staff_section_image' attempt.pk task.question.section.pk %}" alt="Writing Task {{ task.number }} Visual Graphic">
+                                        {% if task.question.image %}
+                                            <img src="{{ task.question.image.url }}" alt="Writing Task {{ task.number }} Visual Graphic">
+                                        {% else %}
+                                            <img src="{% url 'bcl:staff_section_image' attempt.pk task.question.section.pk %}" alt="Writing Task {{ task.number }} Visual Graphic">
+                                        {% endif %}
                                     </div>
                                 </div>
                             {% endif %}

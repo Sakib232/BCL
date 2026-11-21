@@ -3176,6 +3176,12 @@ def exam_result(request, attempt_id):
         s = seconds % 60
         time_taken_str = f"{m:02d}:{s:02d}"
 
+    if module_type == ExamModule.ModuleType.WRITING:
+        if attempt.status != CandidateAttempt.AttemptStatus.IN_PROGRESS and attempt.task_evaluations.count() < 2:
+            from .writing_analyzer import auto_evaluate_writing_attempt
+            auto_evaluate_writing_attempt(attempt)
+            attempt.refresh_from_db()
+
     task_evaluations = (
         list(attempt.task_evaluations.select_related("examiner", "question").order_by("task_number"))
         if module_type == ExamModule.ModuleType.WRITING else []

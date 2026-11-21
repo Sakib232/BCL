@@ -72,6 +72,8 @@ def finalize_attempt_score(attempt):
     if attempt.status == attempt.AttemptStatus.IN_PROGRESS:
         return
     if attempt.module.module_type == ExamModule.ModuleType.WRITING:
+        from .writing_analyzer import auto_evaluate_writing_attempt
+        auto_evaluate_writing_attempt(attempt)
         return
     if attempt.module.module_type == ExamModule.ModuleType.LISTENING:
         # Listening is client-side HTML tested. Preserve verified score and answers payload.

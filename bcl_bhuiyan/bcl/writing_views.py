@@ -111,6 +111,11 @@ def writing_review_detail(request, attempt_id):
         messages.error(request, "This attempt has not been submitted yet.")
         return redirect("bcl:writing_review_list")
 
+    if attempt.task_evaluations.count() < 2:
+        from .writing_analyzer import auto_evaluate_writing_attempt
+        auto_evaluate_writing_attempt(attempt)
+        attempt.refresh_from_db()
+
     prompts = {1: [], 2: []}
     essay_questions = get_writing_task_questions(attempt.module)
     for task_number, question in enumerate(essay_questions, start=1):
