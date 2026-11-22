@@ -641,7 +641,7 @@ document.addEventListener("DOMContentLoaded", () => {
                             line = line.replace(/_{3,}/g, () => {
                                 found += 1;
                                 const blankNum = Number(qNum) + found - 1;
-                                return `<input class="blank-input" type="text" maxlength="200" placeholder="[${blankNum}]" aria-label="Answer ${blankNum}">`;
+                                return `<input class="blank-input" type="text" maxlength="200" placeholder="[${blankNum}]" aria-label="Answer ${blankNum}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">`;
                             });
                         }
 
@@ -659,7 +659,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     while (found < count) {
                         found += 1;
                         const blankNum = Number(qNum) + found - 1;
-                        html += `<div class="my-2"><input class="blank-input" type="text" maxlength="200" placeholder="[${blankNum}]" aria-label="Answer ${blankNum}"></div>`;
+                        html += `<div class="my-2"><input class="blank-input" type="text" maxlength="200" placeholder="[${blankNum}]" aria-label="Answer ${blankNum}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></div>`;
                     }
 
                     blankPrompt.innerHTML = html;
@@ -1710,6 +1710,27 @@ document.addEventListener("DOMContentLoaded", () => {
             audio.controls = false;
         }
     }
+
+    // Prevent browser autofill / search history on all exam inputs
+    function disableExamAutofill() {
+        document.querySelectorAll("input").forEach((inp) => {
+            if (inp.type !== "hidden" && inp.type !== "radio" && inp.type !== "checkbox" && inp.type !== "range") {
+                inp.setAttribute("autocomplete", "off");
+                inp.setAttribute("autocorrect", "off");
+                inp.setAttribute("autocapitalize", "off");
+                inp.setAttribute("spellcheck", "false");
+            }
+        });
+    }
+    disableExamAutofill();
+    document.addEventListener("focusin", (e) => {
+        if (e.target && e.target.tagName === "INPUT") {
+            e.target.setAttribute("autocomplete", "off");
+            e.target.setAttribute("autocorrect", "off");
+            e.target.setAttribute("autocapitalize", "off");
+            e.target.setAttribute("spellcheck", "false");
+        }
+    }, true);
 
     // Prevent accidental unload/reload while exam is in progress
     window.addEventListener("beforeunload", (e) => {
